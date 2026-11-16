@@ -29,7 +29,7 @@ if [[ $(git -C "$dir" rev-parse HEAD) == "$commit" ]]; then
 fi
 
 rm -f "$root/patches/$dep"/*.patch
-git -C "$dir" format-patch --binary -o "$root/patches/$dep" "$commit"..HEAD
+git -C "$dir" format-patch --binary --from="$PATCH_AUTHOR" -o "$root/patches/$dep" "$commit"..HEAD
 ls -1 "$root/patches/$dep"/*.patch | xargs -n1 basename > "$root/patches/$dep/series"
 
 tree=$(git -C "$dir" rev-parse HEAD^{tree})
