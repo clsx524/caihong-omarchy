@@ -1,0 +1,196 @@
+From 2a55eac5953afdf7ccd4be1a5d2df309a8f82267 Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:02:37 -0800
+Subject: [PATCH 1/8] platform: add aarch64-caihong identity
+
+Teach the hardware detector and its test fixtures about the OnePlus Caihong tablet, including the trusted offline-image path used by the installer.
+---
+ bin/omarchy-hw-aarch64-caihong   | 14 ++++++++++++++
+ bin/omarchy-hw-platform          | 24 +++++++++++++++++-------
+ test/shell.d/base-test.sh        |  1 +
+ test/shell.d/hw-platform-test.sh | 27 ++++++++++++++++++++++++---
+ 4 files changed, 56 insertions(+), 10 deletions(-)
+ create mode 100755 bin/omarchy-hw-aarch64-caihong
+
+diff --git a/bin/omarchy-hw-aarch64-caihong b/bin/omarchy-hw-aarch64-caihong
+new file mode 100755
+index 000000000..f8a140539
+--- /dev/null
++++ b/bin/omarchy-hw-aarch64-caihong
+@@ -0,0 +1,14 @@
++#!/bin/bash -p
++
++# omarchy:summary=Detect whether the computer is a OnePlus Caihong tablet.
++
++# Keep privileged startup and detector resolution identical to the other families.
++if [[ $- != *p* ]]; then
++  echo "Refusing an unsafe Bash startup." >&2
++  exit 126
++fi
++
++dir=${BASH_SOURCE[0]%/*}
++[[ $dir != "${BASH_SOURCE[0]}" ]] || dir=.
++platform=$("$dir/omarchy-hw-platform") || exit 1
++[[ $platform == "aarch64-caihong" ]]
+diff --git a/bin/omarchy-hw-platform b/bin/omarchy-hw-platform
+index d912986b1..3abfbf3ab 100755
+--- a/bin/omarchy-hw-platform
++++ b/bin/omarchy-hw-platform
+@@ -1,11 +1,11 @@
+ #!/bin/bash -p
+ 
+-# omarchy:summary=Print the hardware platform: x86, aarch64, aarch64-apple, aarch64-qualcomm, aarch64-n1x or aarch64-gb10.
++# omarchy:summary=Print the hardware platform: x86, aarch64, aarch64-apple, aarch64-qualcomm, aarch64-caihong, aarch64-n1x or aarch64-gb10.
+ 
+ # Platform names are the CPU architecture, then the hardware family when it
+ # needs handling of its own: x86, aarch64 (every ARM machine without one),
+ # aarch64-apple (Apple Silicon), aarch64-qualcomm (Snapdragon), aarch64-n1x
+-# (NVIDIA N1x) and aarch64-gb10 (NVIDIA GB10 desktops). A later family is
++# (NVIDIA N1x), aarch64-caihong (OnePlus tablets) and aarch64-gb10 (NVIDIA GB10 desktops). A later family is
+ # aarch64-<family>, so "aarch64*" always means ARM (AGENTS.md, Platforms).
+ #
+ # Device-tree ARM laptops have no DMI, so the board identity is the root node of
+@@ -147,7 +147,7 @@ image_platform() {
+     generic) platform=x86 ;;
+     qualcomm) platform=aarch64-qualcomm ;;
+   esac
+-  if [[ ! $platform =~ ^(x86|aarch64|aarch64-apple|aarch64-qualcomm|aarch64-n1x|aarch64-gb10)$ ]]; then
++  if [[ ! $platform =~ ^(x86|aarch64|aarch64-apple|aarch64-qualcomm|aarch64-caihong|aarch64-n1x|aarch64-gb10)$ ]]; then
+     echo "Error: the image manifest $manifest names no known platform: ${platform:-none}" >&2
+     return 1
+   fi
+@@ -173,16 +173,24 @@ for source in "${sources[@]}"; do
+ 
+   apple=0
+   qcom=0
++  caihong=0
++  sm8650=0
+   mapfile -d '' -t tokens <"$source"
+   for token in "${tokens[@]}"; do
+     [[ $token == "apple,"* ]] && apple=1
+     [[ $token == "qcom,"* ]] && qcom=1
++    [[ $token == "qcom,sm8650" ]] && sm8650=1
++    [[ $token == "oneplus,caihong" ]] && caihong=1
+   done
+ 
+-  if (( apple && qcom )); then
++  if (( apple && (qcom || caihong) )); then
+     contradiction "$source names both Apple and Qualcomm hardware"
++  elif (( caihong && !sm8650 )); then
++    contradiction "$source names the Caihong tablet without its qcom,sm8650 SoC"
+   elif (( apple )); then
+     found=apple
++  elif (( caihong )); then
++    found=caihong
+   elif (( qcom )); then
+     found=qcom
+   else
+@@ -228,7 +236,7 @@ if [[ -n $n1x_source && -n $gb10_source ]]; then
+ fi
+ 
+ if [[ -n $n1x_source ]]; then
+-  [[ $vendor != apple && $vendor != qcom ]] ||
++  [[ $vendor != apple && $vendor != qcom && $vendor != caihong ]] ||
+     contradiction "$vendor_source names $vendor hardware but $n1x_source is an NVIDIA N1x"
+   [[ $machine == "aarch64" ]] || contradiction "$n1x_source is an NVIDIA N1x but the CPU is $machine"
+   echo aarch64-n1x
+@@ -236,7 +244,7 @@ if [[ -n $n1x_source ]]; then
+ fi
+ 
+ if [[ -n $gb10_source ]]; then
+-  [[ $vendor != apple && $vendor != qcom ]] ||
++  [[ $vendor != apple && $vendor != qcom && $vendor != caihong ]] ||
+     contradiction "$vendor_source names $vendor hardware but $gb10_source is an NVIDIA GB10"
+   [[ $machine == "aarch64" ]] || contradiction "$gb10_source is an NVIDIA GB10 but the CPU is $machine"
+   echo aarch64-gb10
+@@ -244,10 +252,12 @@ if [[ -n $gb10_source ]]; then
+ fi
+ 
+ case $vendor in
+-  apple | qcom)
++  apple | qcom | caihong)
+     [[ $machine == "aarch64" ]] || contradiction "$vendor_source names $vendor hardware but the CPU is $machine"
+     if [[ $vendor == "apple" ]]; then
+       echo aarch64-apple
++    elif [[ $vendor == "caihong" ]]; then
++      echo aarch64-caihong
+     else
+       echo aarch64-qualcomm
+     fi
+diff --git a/test/shell.d/base-test.sh b/test/shell.d/base-test.sh
+index 30f9d1307..45705229e 100644
+--- a/test/shell.d/base-test.sh
++++ b/test/shell.d/base-test.sh
+@@ -475,6 +475,7 @@ fake_platform() {
+   case $platform in
+     aarch64-apple) compatible=(apple,j416c apple,t6021 apple,arm-platform) ;;
+     aarch64-qualcomm) compatible=(lenovo,yoga-slim7x qcom,x1e80100) ;;
++    aarch64-caihong) compatible=(oneplus,caihong qcom,sm8650) ;;
+     aarch64) compatible=(raspberrypi,5-model-b brcm,bcm2712) ;;
+     x86) machine=x86_64 ;;
+     *) fail "fake_platform knows the platform $platform" ;;
+diff --git a/test/shell.d/hw-platform-test.sh b/test/shell.d/hw-platform-test.sh
+index d7f1bff7d..a6c88579c 100644
+--- a/test/shell.d/hw-platform-test.sh
++++ b/test/shell.d/hw-platform-test.sh
+@@ -21,7 +21,7 @@ if (( EUID != 0 )); then
+ fi
+ if (( EUID == 0 )) || unshare --user --map-root-user true 2>/dev/null; then
+   live=$("${root_runner[@]}" "$detector") || fail "root detects the live platform"
+-  [[ $live =~ ^(aarch64-apple|aarch64-qualcomm|aarch64-n1x|aarch64-gb10|aarch64|x86)$ ]] || fail "root detects the live platform" "live: $live"
++  [[ $live =~ ^(aarch64-apple|aarch64-qualcomm|aarch64-caihong|aarch64-n1x|aarch64-gb10|aarch64|x86)$ ]] || fail "root detects the live platform" "live: $live"
+   for platform in aarch64-apple aarch64 x86; do
+     fixture="$test_tmp/$platform"
+     if [[ -f $fixture/proc/device-tree/compatible ]]; then
+@@ -41,7 +41,7 @@ fi
+ 
+ # -p in the shebang is what keeps exported functions and BASH_ENV out, so an
+ # ordinary Bash launch with a decoy -p argument is refused before it reads anything.
+-for command in omarchy-hw-platform omarchy-hw-aarch64-apple omarchy-hw-apple-silicon omarchy-hw-aarch64-qualcomm omarchy-hw-aarch64-n1x omarchy-hw-n1x omarchy-hw-aarch64-gb10; do
++for command in omarchy-hw-platform omarchy-hw-aarch64-apple omarchy-hw-apple-silicon omarchy-hw-aarch64-qualcomm omarchy-hw-aarch64-caihong omarchy-hw-aarch64-n1x omarchy-hw-n1x omarchy-hw-aarch64-gb10; do
+   if /usr/bin/bash "$ROOT/bin/$command" -p >/dev/null 2>"$test_tmp/error"; then
+     fail "$command refuses an ordinary Bash launch"
+   fi
+@@ -136,6 +136,26 @@ for board in yoga-slim7x xps13-9345 t14s; do
+ done
+ pass "real Apple and Snapdragon device trees are recognised"
+ 
++# The tablet must not enter the Snapdragon laptop firmware/UKI setup path.
++write_tree caihong proc oneplus,caihong qcom,sm8650
++write_tree caihong sys oneplus,caihong qcom,sm8650
++expect caihong aarch64 aarch64-caihong "Caihong takes its own direct-root platform"
++write_tree caihong-substring proc vendor,oneplus,caihong qcom,sm8650
++expect caihong-substring aarch64 aarch64-qualcomm "only the exact Caihong token names the tablet"
++expect_contradiction caihong x86_64 "Caihong cannot claim an x86 CPU"
++write_tree caihong-disagree proc oneplus,caihong qcom,sm8650
++write_tree caihong-disagree sys lenovo,yoga-slim7x qcom,x1e80100
++expect_contradiction caihong-disagree aarch64 "Caihong and laptop source identities cannot disagree"
++write_tree caihong-apple proc oneplus,caihong apple,j314s
++expect_contradiction caihong-apple aarch64 "Caihong cannot also claim Apple hardware"
++write_tree caihong-no-soc proc oneplus,caihong qcom,x1e80100
++expect_contradiction caihong-no-soc aarch64 "Caihong without its SM8650 SoC fails"
++if TEST_ARCH=aarch64 OMARCHY_PROC_ROOT="$test_tmp/cases/caihong/proc" OMARCHY_SYS_ROOT="$test_tmp/cases/caihong/sys" \
++  PATH="$stub_bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-hw-aarch64-qualcomm"; then
++  fail "Caihong must not satisfy the laptop Qualcomm predicate"
++fi
++pass "Caihong has a distinct, contradiction-checked direct-root identity"
++
+ write_tree qemu-virt proc linux,dummy-virt
+ write_tree raspberry-pi proc raspberrypi,5-model-b brcm,bcm2712
+ mkdir -p "$test_tmp/cases/acpi/proc" "$test_tmp/cases/acpi/sys"
+@@ -217,10 +237,11 @@ expect_contradiction gb10-qcom aarch64 "a GB10 with a Qualcomm device tree fails
+ n1x_acpi gb10-n1x
+ gb10_pci gb10-n1x
+ expect_contradiction gb10-n1x aarch64 "a GB10 with the N1x's I2C controllers fails"
+-for family in n1x qualcomm gb10; do
++for family in n1x qualcomm caihong gb10; do
+   case $family in
+     n1x) yes=n1x-acpi no=qemu-virt ;;
+     qualcomm) yes=yoga-slim7x no=n1x-acpi ;;
++    caihong) yes=caihong no=yoga-slim7x ;;
+     gb10) yes=gb10 no=n1x-gpu ;;
+   esac
+   for case_name in "$yes" "$no"; do
+-- 
+2.54.0 (Apple Git-157)
+

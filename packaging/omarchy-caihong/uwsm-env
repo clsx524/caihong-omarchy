@@ -1,0 +1,3 @@
+# The SM8650 DPU currently scans compressed Aquamarine buffers as a solid frame.
+# Use linear buffers until the DRM modifier path is fixed in the kernel/compositor.
+export AQ_NO_MODIFIERS=1

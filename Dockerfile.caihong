@@ -1,0 +1,9 @@
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+ alsa-utils android-sdk-libsparse-utils bc bison build-essential ca-certificates \
+ ccache cmake curl dwarves e2fsprogs file flex git kmod libarchive-tools \
+ libegl-dev libelf-dev libgbm-dev libgles-dev libdrm-dev libssl-dev libva-dev \
+ meson ninja-build pkg-config python3 rpm rsync shellcheck systemd zstd \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /work/caihong-linux-rootfs

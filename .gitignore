@@ -1,0 +1,8 @@
+/build/
+/.ccache/
+/downloads/
+/modules-current/
+/release/
+*.part
+*.tmp
+__pycache__/

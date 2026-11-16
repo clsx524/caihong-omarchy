@@ -1,0 +1,132 @@
+From e392191cb19b7a1600eaf3a8e63dd96e5f356dbf Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:02:46 -0800
+Subject: [PATCH] pkgbuilds: build the Caihong Omarchy revision
+
+Pin both packages to the Caihong Omarchy commit, carry the caihong1 version, strip AppleDouble sidecars from the source copy, and install the shared hardware detector for the settings scriptlets.
+---
+ pkgbuilds/omarchy-settings/PKGBUILD             | 17 +++++++++++++----
+ .../omarchy-settings/omarchy-settings.install   | 14 +++++++-------
+ pkgbuilds/omarchy/PKGBUILD                      | 11 +++++++----
+ 3 files changed, 27 insertions(+), 15 deletions(-)
+
+diff --git a/pkgbuilds/omarchy-settings/PKGBUILD b/pkgbuilds/omarchy-settings/PKGBUILD
+index dc33b3cf..5b42591c 100644
+--- a/pkgbuilds/omarchy-settings/PKGBUILD
++++ b/pkgbuilds/omarchy-settings/PKGBUILD
+@@ -11,9 +11,9 @@
+ #    omarchy-settings must always carry identical _tag/_commit/pkgver/sha256sums.
+ pkgname='omarchy-settings'
+ _tag='v4.5.0'
+-_commit='a948d8a6871f446b335258c827648ac5f4e9428b'
+-pkgver=4.5.0
+-pkgrel=2
++_commit='ac2690cd7be4f47e4a255f5e2e78d904d436b068'
++pkgver=4.5.0.caihong1
++pkgrel=8
+ pkgdesc='Omarchy user defaults, /etc/skel content, fonts, plymouth theme, and support helpers'
+ # Arch-specific because the shipped /etc tree is not the same on every
+ # architecture for older sources: their zram and oomd drop-ins belong to the
+@@ -135,7 +135,7 @@ if [[ -n "${OMARCHY_SRC:-}" ]]; then
+   sha256sums=()
+ else
+   source=("omarchy::git+https://github.com/omacom/omarchy.git#commit=${_commit}")
+-  sha256sums=('bf3220fcc7b9d883a86f1c59efd79ce675fe137cdbb1324e9785c3cc45d01de7')
++  sha256sums=('c31a1cb76aa89e78254603f7ea6deecd9ed7e78309befd9a0b70ddbf015468ba')
+ fi
+ 
+ prepare() {
+@@ -143,6 +143,9 @@ prepare() {
+     rm -rf "$srcdir/omarchy"
+     mkdir -p "$srcdir/omarchy"
+     cp -a "${OMARCHY_SRC}/." "$srcdir/omarchy/"
++    # Docker Desktop can expose macOS extended attributes as AppleDouble
++    # sidecars. They are metadata, not Omarchy configuration or runtime files.
++    find "$srcdir/omarchy" -type f \( -name '._*' -o -name '.DS_Store' \) -delete
+   fi
+ }
+ 
+@@ -487,6 +490,12 @@ EOF
+       "$pkgdir/usr/share/libalpm/scripts/omarchy-hw-platform"
+   fi
+ 
++  # Scriptlets run before the runtime package is present on a fresh install.
++  # Share the source's trusted offline/live detector instead of guessing the
++  # hardware from the build host or introducing a second manifest parser.
++  install -Dm755 bin/omarchy-hw-platform \
++    "$pkgdir/usr/lib/omarchy/settings/omarchy-hw-platform"
++
+   # Temporary passwordless sudo: the grant command, its library, the boot
+   # cleanup rule from etc/ and the hook that revokes grants before this
+   # package changes all live here, so the hook never outlives its Exec target
+diff --git a/pkgbuilds/omarchy-settings/omarchy-settings.install b/pkgbuilds/omarchy-settings/omarchy-settings.install
+index d3f9daf5..2468a1e3 100644
+--- a/pkgbuilds/omarchy-settings/omarchy-settings.install
++++ b/pkgbuilds/omarchy-settings/omarchy-settings.install
+@@ -63,8 +63,10 @@ pre_upgrade() {
+   pre_remove
+ }
+ 
+-_apple_silicon() {
+-  [[ $(uname -m) == aarch64 ]] && grep -aq 'apple,' /proc/device-tree/compatible 2>/dev/null
++_preserve_board_identity() {
++  local platform
++  platform=$(/usr/lib/omarchy/settings/omarchy-hw-platform) || return 1
++  [[ $platform == aarch64-apple || $platform == aarch64-caihong ]]
+ }
+ 
+ _etc_overrides_apply() {
+@@ -91,11 +93,9 @@ _etc_overrides_apply() {
+   # the trade-off of routing upstream-owned paths through etc-overrides instead
+   # of pacman backup=().
+   #
+-  # Apple Silicon installs run on Arch Linux ARM's base with the Asahi packages
+-  # and keep that system identity, which Asahi's tooling reports: /etc/os-release
+-  # stays the symlink to the distribution's /usr/lib/os-release there. Every
+-  # other override applies on Apple Silicon as everywhere else.
+-  if _apple_silicon; then
++  # These boards keep their distribution identity, used by board update tools.
++  # The shared detector recognizes trusted offline images as well as hardware.
++  if _preserve_board_identity; then
+     if [[ -f /usr/lib/os-release ]]; then
+       rm -f /etc/os-release
+       ln -s ../usr/lib/os-release /etc/os-release
+diff --git a/pkgbuilds/omarchy/PKGBUILD b/pkgbuilds/omarchy/PKGBUILD
+index 25299b52..1e582ed6 100644
+--- a/pkgbuilds/omarchy/PKGBUILD
++++ b/pkgbuilds/omarchy/PKGBUILD
+@@ -11,9 +11,9 @@
+ #    omarchy-settings must always carry identical _tag/_commit/pkgver/sha256sums.
+ pkgname='omarchy'
+ _tag='v4.5.0'
+-_commit='a948d8a6871f446b335258c827648ac5f4e9428b'
+-pkgver=4.5.0
+-pkgrel=2
++_commit='ac2690cd7be4f47e4a255f5e2e78d904d436b068'
++pkgver=4.5.0.caihong1
++pkgrel=8
+ pkgdesc='Beautiful, modern, and opinionated Arch Linux by DHH'
+ # The payload is architecture-independent, but the dependency set is not: the
+ # boot stack differs per architecture (see depends_x86_64 / depends_aarch64),
+@@ -97,7 +97,7 @@ if [[ -n "${OMARCHY_SRC:-}" ]]; then
+   sha256sums=()
+ else
+   source=("omarchy::git+https://github.com/omacom/omarchy.git#commit=${_commit}")
+-  sha256sums=('bf3220fcc7b9d883a86f1c59efd79ce675fe137cdbb1324e9785c3cc45d01de7')
++  sha256sums=('c31a1cb76aa89e78254603f7ea6deecd9ed7e78309befd9a0b70ddbf015468ba')
+ fi
+ 
+ prepare() {
+@@ -105,6 +105,9 @@ prepare() {
+     rm -rf "$srcdir/omarchy"
+     mkdir -p "$srcdir/omarchy"
+     cp -a "${OMARCHY_SRC}/." "$srcdir/omarchy/"
++    # Docker Desktop can expose macOS extended attributes as AppleDouble
++    # sidecars. They are metadata, not Omarchy modules or runtime files.
++    find "$srcdir/omarchy" -type f \( -name '._*' -o -name '.DS_Store' \) -delete
+   fi
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+

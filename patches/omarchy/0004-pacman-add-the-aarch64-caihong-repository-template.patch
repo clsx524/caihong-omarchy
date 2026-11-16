@@ -1,0 +1,147 @@
+From 5f11ce4ae9924baaed47c3f1c469098f82b2e485 Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:02:37 -0800
+Subject: [PATCH 4/8] pacman: add the aarch64-caihong repository template
+
+Ship the board's pacman configuration and teach the template helper to select it.
+---
+ .../pacman/aarch64-caihong/mirrorlist-edge    |  3 ++
+ .../pacman/aarch64-caihong/pacman-edge.conf   | 34 +++++++++++++++++++
+ install/helpers/pacman.sh                     |  3 +-
+ test/shell.d/pacman-templates-test.sh         | 18 +++++++---
+ 4 files changed, 52 insertions(+), 6 deletions(-)
+ create mode 100644 default/pacman/aarch64-caihong/mirrorlist-edge
+ create mode 100644 default/pacman/aarch64-caihong/pacman-edge.conf
+
+diff --git a/default/pacman/aarch64-caihong/mirrorlist-edge b/default/pacman/aarch64-caihong/mirrorlist-edge
+new file mode 100644
+index 000000000..74727dba7
+--- /dev/null
++++ b/default/pacman/aarch64-caihong/mirrorlist-edge
+@@ -0,0 +1,3 @@
++# Omarchy's mirror of Arch Linux ARM, over HTTPS since the repository databases
++# are unsigned. It keeps Arch Linux ARM's $arch/$repo layout.
++Server = https://arm-mirror.omarchy.org/$arch/$repo
+diff --git a/default/pacman/aarch64-caihong/pacman-edge.conf b/default/pacman/aarch64-caihong/pacman-edge.conf
+new file mode 100644
+index 000000000..e4cd0363c
+--- /dev/null
++++ b/default/pacman/aarch64-caihong/pacman-edge.conf
+@@ -0,0 +1,34 @@
++# See the pacman.conf(5) manpage for option and repository directives
++# Arch Linux ARM provides the aarch64 repositories used below.
++
++[options]
++Color
++ILoveCandy
++VerbosePkgLists
++HoldPkg = pacman glibc
++Architecture = auto
++CheckSpace
++ParallelDownloads = 5
++DownloadUser = alpm
++# The Caihong kernel lacks the sandbox syscalls pacman probes; the board rootfs
++# build enables this for the same reason.
++DisableSandboxFilesystem
++
++# By default, pacman accepts packages signed by keys that its local keyring
++# trusts (see pacman-key and its man page), as well as unsigned packages.
++SigLevel = Required DatabaseOptional
++LocalFileSigLevel = Optional
++
++# pacman searches repositories in the order defined here. Omarchy comes first,
++# as on x86_64, so a package it also publishes is installed from Omarchy.
++[omarchy]
++Server = https://pkgs.omarchy.org/edge/$arch
++
++[core]
++Include = /etc/pacman.d/mirrorlist
++
++[extra]
++Include = /etc/pacman.d/mirrorlist
++
++[alarm]
++Include = /etc/pacman.d/mirrorlist
+diff --git a/install/helpers/pacman.sh b/install/helpers/pacman.sh
+index 4ca3f4271..674fe22b8 100644
+--- a/install/helpers/pacman.sh
++++ b/install/helpers/pacman.sh
+@@ -8,7 +8,7 @@
+ omarchy_pacman_templates() {
+   case ${1:-} in
+     x86) echo "$OMARCHY_PATH/default/pacman" ;;
+-    aarch64 | aarch64-apple) echo "$OMARCHY_PATH/default/pacman/$1" ;;
++    aarch64 | aarch64-apple | aarch64-caihong) echo "$OMARCHY_PATH/default/pacman/$1" ;;
+     # Snapdragon, the N1x and the GB10 use Arch Linux ARM and Omarchy's aarch64
+     # repository like any other ARM machine, so they share its templates.
+     aarch64-qualcomm | aarch64-n1x | aarch64-gb10) echo "$OMARCHY_PATH/default/pacman/aarch64" ;;
+@@ -25,6 +25,7 @@ omarchy_pacman_templates() {
+ omarchy_pacman_default_channel() {
+   case ${1:-} in
+     x86 | aarch64 | aarch64-qualcomm | aarch64-n1x | aarch64-gb10) echo stable ;;
++    aarch64-caihong) echo edge ;;
+     aarch64-apple) echo edge ;;
+     *)
+       echo "Error: Unknown platform '${1:-}'." >&2
+diff --git a/test/shell.d/pacman-templates-test.sh b/test/shell.d/pacman-templates-test.sh
+index 95dd85d07..5dc159241 100755
+--- a/test/shell.d/pacman-templates-test.sh
++++ b/test/shell.d/pacman-templates-test.sh
+@@ -15,9 +15,14 @@ trap 'rm -rf "$work"' EXIT
+ export OMARCHY_PATH="$ROOT"
+ source "$ROOT/install/helpers/pacman.sh"
+ 
+-platforms="x86 aarch64 aarch64-apple"
++platforms="x86 aarch64 aarch64-apple aarch64-caihong"
+ channels_for() {
+-  echo "stable rc edge"
++  # Caihong's board kernel and Omarchy packages are built together on edge;
++  # it offers no stable or rc template.
++  case ${1:-} in
++    aarch64-caihong) echo edge ;;
++    *) echo "stable rc edge" ;;
++  esac
+ }
+ 
+ # ── the templates ────────────────────────────────────────────────────────────
+@@ -36,8 +41,10 @@ for platform in x86 aarch64; do
+   [[ $(omarchy_pacman_default_channel "$platform") == stable ]] || fail "$platform defaults to stable"
+ done
+ [[ $(omarchy_pacman_default_channel aarch64-apple) == edge ]] || fail "aarch64-apple defaults to edge"
++[[ $(omarchy_pacman_templates aarch64-caihong) == "$ROOT/default/pacman/aarch64-caihong" ]] || fail "Caihong keeps its own template, which preserves DisableSandboxFilesystem"
++[[ $(omarchy_pacman_default_channel aarch64-caihong) == edge ]] || fail "Caihong uses the coherent edge package ABI"
+ ! omarchy_pacman_default_channel riscv 2>/dev/null || fail "an unknown platform has no default channel"
+-pass "every platform defaults to stable but Apple Silicon, which defaults to edge"
++pass "Apple Silicon and Caihong default to edge; other platforms default to stable"
+ 
+ # pacman reads each repository list from the template, with its mirrorlist
+ # standing in for /etc/pacman.d/mirrorlist.
+@@ -54,7 +61,7 @@ for platform in $platforms; do
+     list=$(repos "$templates" "$channel") || fail "$platform $channel: pacman reads the template"
+     case $platform in
+       x86) expected="omarchy core extra multilib " ;;
+-      aarch64) expected="omarchy core extra alarm " ;;
++      aarch64 | aarch64-caihong) expected="omarchy core extra alarm " ;;
+       aarch64-apple) expected="omarchy asahi-alarm core extra alarm " ;;
+     esac
+     [[ $list == "$expected" ]] || fail "$platform $channel: repositories in order" "$list"
+@@ -73,7 +80,7 @@ for platform in $platforms; do
+     [[ $mirror == "https://$host/$layout" ]] || fail "$platform $channel: the $channel Arch mirror" "$mirror"
+   done
+ done
+-pass "every platform has templates for stable, rc and edge, each with its repositories in order and its channel's mirrors"
++pass "every supported platform channel has its repositories in order and its channel's mirrors"
+ 
+ # omarchy-version-channel names each template pair's channel: the menu's
+ # checkmarks and a refresh with no channel go by it.
+@@ -162,6 +169,7 @@ for platform in $platforms; do
+     x86) templates=$SUDO_TEST_ROOT/default/pacman ;;
+     aarch64) templates=$SUDO_TEST_ROOT/default/pacman/aarch64 ;;
+     aarch64-apple) templates=$SUDO_TEST_ROOT/default/pacman/aarch64-apple ;;
++    aarch64-caihong) templates=$SUDO_TEST_ROOT/default/pacman/aarch64-caihong ;;
+   esac
+   # No channel named refreshes to the platform's default one.
+   for channel in $(channels_for "$platform") ""; do
+-- 
+2.54.0 (Apple Git-157)
+

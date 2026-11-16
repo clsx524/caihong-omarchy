@@ -1,0 +1,99 @@
+name: Build Caihong device update packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: caihong-device-update-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  device-update:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            alsa-utils bc bison build-essential ccache curl dwarves file flex git \
+            kmod libarchive-tools libegl-dev libdrm-dev libelf-dev libgbm-dev \
+            libgles-dev libssl-dev libva-dev meson ninja-build pkg-config \
+            python3 rpm rsync shellcheck skopeo umoci zstd
+
+      - name: Resolve kernel and platform dependencies
+        run: scripts/checkout-dependencies.sh
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-
+            ccache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure compiler cache
+        run: |
+          ccache --max-size=2G
+          ccache --set-config=compression=true
+          ccache --set-config=compression_level=6
+          ccache --zero-stats
+
+      - name: Build kernel update packages
+        run: |
+          jobs=$(nproc)
+          JOBS=$jobs ZSTD_THREADS=$jobs FORCE=1 \
+            KERNEL_CC="ccache gcc" KERNEL_HOSTCC="ccache gcc" \
+            scripts/build-kernel-release.sh
+          scripts/build-linux-caihong-rpm.sh modules-current release
+          sudo -E env PATH="$PATH" \
+            DISTRIBUTION=archlinuxarm scripts/build-caihong-platform-package.sh release
+          sudo -E env PATH="$PATH" \
+            DISTRIBUTION=armada LIBDIR=lib64 \
+            scripts/build-caihong-platform-package.sh release
+          sudo chown -R "$USER:$USER" release
+          scripts/verify-caihong-update-packages.sh release
+          (
+            cd release
+            sha256sum \
+              linux-caihong-*-aarch64.pkg.tar.zst \
+              linux-caihong-*-1.aarch64.rpm \
+              caihong-platform-*-aarch64.pkg.tar.zst \
+              caihong-platform-*-1.aarch64.rpm \
+              > SHA256SUMS.device-update
+          )
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save compiler cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-${{ github.run_id }}
+
+      - name: Upload device update packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: caihong-device-update-${{ github.run_id }}
+          path: |
+            release/linux-caihong-*-aarch64.pkg.tar.zst
+            release/linux-caihong-*-1.aarch64.rpm
+            release/caihong-platform-*-aarch64.pkg.tar.zst
+            release/caihong-platform-*-1.aarch64.rpm
+            release/SHA256SUMS.device-update
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

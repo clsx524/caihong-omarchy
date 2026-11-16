@@ -1,0 +1,33 @@
+[submodule "linux"]
+	path = linux
+	url = https://github.com/Osilvfe/linux.git
+[submodule "omarchy"]
+	path = omarchy
+	url = https://github.com/omacom/omarchy.git
+[submodule "omarchy-pkgs"]
+	path = omarchy-pkgs
+	url = https://github.com/omacom/omarchy-pkgs.git
+[submodule "external/libcamera"]
+	path = external/libcamera
+	url = https://github.com/Osilvfe/libcamera.git
+[submodule "external/plasma-camera"]
+	path = external/plasma-camera
+	url = https://github.com/Osilvfe/plasma-camera.git
+[submodule "external/libssc"]
+	path = external/libssc
+	url = https://codeberg.org/DylanVanAssche/libssc.git
+[submodule "external/qcom-va-driver"]
+	path = external/qcom-va-driver
+	url = https://github.com/radxa-pkg/qcom-va-driver.git
+[submodule "external/power-profiles-daemon"]
+	path = external/power-profiles-daemon
+	url = https://gitlab.freedesktop.org/upower/power-profiles-daemon.git
+[submodule "external/qbootctl"]
+	path = external/qbootctl
+	url = https://github.com/linux-msm/qbootctl.git
+[submodule "external/mkbootimg"]
+	path = external/mkbootimg
+	url = https://android.googlesource.com/platform/system/tools/mkbootimg
+[submodule "external/caihong-toolbox"]
+	path = external/caihong-toolbox
+	url = https://github.com/Osilvfe/caihong-toolbox.git

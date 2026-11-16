@@ -1,0 +1,174 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: GPL-2.0-only
+"""Fixed Omarchy lifecycle entrypoints for the Caihong direct-root system."""
+import os
+from pathlib import Path
+import pwd
+import stat
+import subprocess
+import sys
+
+PROVIDER = Path('/usr/lib/omarchy/caihong')
+VERIFIER = Path('/usr/lib/linux-caihong/install-current-slot')
+COMPATIBLE = Path('/sys/firmware/devicetree/base/compatible')
+OFFLINE = Path('/run/caihong/offline-rootfs-build')
+SYSTEM_UNITS = (
+    'bluetooth.service', 'power-profiles-daemon.service', 'sddm.service',
+    'caihong-hardware-mac.service', 'caihong-mark-boot-successful.service',
+    'caihong-ssc.service', 'caihong-keyboard.service',
+    'caihong-bluetooth-autostart.service', 'caihong-pen-autoconnect.timer',
+    'caihong-pen-charge.timer', 'caihong-pen-pair.timer',
+    'caihong-grow-rootfs.service', 'caihong-fix-kwin-brightness.service',
+    'caihong-clean-pogo-kde.service',
+)
+OTHER_MANAGERS = (
+    'gdm.service', 'gdm3.service', 'lightdm.service', 'ly.service',
+    'greetd.service', 'lemurs.service', 'lxdm.service', 'nodm.service',
+    'slim.service', 'wdm.service', 'xdm.service', 'cosmic-greeter.service',
+)
+UNSUPPORTED = {
+    'provision-prepare', 'provision-commit', 'provision-verify',
+    'reset-prepare', 'reset-verify', 'reset-commit', 'reset-rollback',
+    'luks-slots', 'update-takeover',
+}
+
+
+class Refusal(RuntimeError):
+    pass
+
+
+def require(condition, message):
+    if not condition:
+        raise Refusal(message)
+
+
+def trusted_executable(path):
+    require(path.is_file() and os.access(path, os.X_OK), f'missing executable {path}')
+    for candidate in (path, *path.parents):
+        info = candidate.lstat()
+        require(not stat.S_ISLNK(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+                f'refusing untrusted package path {candidate}')
+
+
+def platform():
+    require(not OFFLINE.exists(), 'setup and verification require the booted tablet, not an offline image')
+    require(os.uname().machine == 'aarch64', 'requires aarch64 hardware')
+    tokens = COMPATIBLE.read_bytes().split(b'\0')
+    require(b'oneplus,caihong' in tokens and b'qcom,sm8650' in tokens,
+            'requires live oneplus,caihong / qcom,sm8650 device tree')
+
+
+def verify_boot():
+    trusted_executable(VERIFIER)
+    trusted_executable(VERIFIER.parent / 'boot-state')
+    subprocess.run([str(VERIFIER), '--verify'], check=True,
+                   env={'PATH': '/usr/bin', 'LC_ALL': 'C'})
+
+
+def systemctl(*args, check=True):
+    return subprocess.run(['/usr/bin/systemctl', '--root=/', *args], check=check,
+                          capture_output=True, text=True,
+                          env={'PATH': '/usr/bin', 'LC_ALL': 'C', 'SYSTEMD_OFFLINE': '1'})
+
+
+def setup_system():
+    # Fail every boot/platform/selection precondition before touching unit links.
+    # Use --root, never --now: the current SDDM/Plasma session remains running.
+    verify_boot()
+    for unit in SYSTEM_UNITS:
+        require(any((Path(directory) / unit).is_file() for directory in
+                    ('/etc/systemd/system', '/usr/lib/systemd/system')),
+                f'missing device service {unit}; reinstall caihong-platform/SDDM')
+    alias = Path('/etc/systemd/system/display-manager.service')
+    require(not alias.exists() or alias.is_symlink(), 'display-manager.service is an administrator file')
+    if alias.is_symlink():
+        require(alias.resolve().name in ('sddm.service', 'plasmalogin.service'),
+                'another display manager is selected; select SDDM explicitly before setup')
+    for unit in OTHER_MANAGERS:
+        status = systemctl('is-enabled', unit, check=False)
+        require(status.stdout.strip() not in ('enabled', 'enabled-runtime', 'linked', 'linked-runtime'),
+                f'{unit} is selected; select SDDM explicitly before setup')
+    for unit in SYSTEM_UNITS:
+        require(systemctl('is-enabled', unit, check=False).stdout.strip() not in ('masked', 'masked-runtime'),
+                f'{unit} is masked; unmask it explicitly before setup')
+    # PLM is the previous board image's default. Do not stop it when migrating.
+    if any((Path(directory) / 'plasmalogin.service').exists() for directory in
+           ('/etc/systemd/system', '/usr/lib/systemd/system')):
+        systemctl('disable', 'plasmalogin.service')
+    systemctl('enable', *SYSTEM_UNITS)
+    systemctl('set-default', 'graphical.target')
+    print('omarchy-caihong: device services and SDDM enabled for next boot; running sessions unchanged')
+
+
+def internal_output():
+    # The connector name is not stable across kernels and panels, so read the
+    # live DRM state instead of hardcoding DSI-1. Only a connected internal
+    # panel (DSI or eDP) is the touch/pen target.
+    for entry in sorted(Path('/sys/class/drm').glob('card*-*')):
+        name = entry.name.split('-', 1)[1]
+        if not name.startswith(('DSI-', 'eDP-')):
+            continue
+        status = entry / 'status'
+        if status.is_file() and status.read_text().strip() == 'connected':
+            return name
+    return None
+
+
+def setup_user():
+    # The platform's existing display-input helper talks exclusively to KWin.
+    # Do not launch it in Hyprland or rewrite Plasma's calibration/settings.
+    # Bind Hyprland's native touch/pen mapping to the actual internal panel.
+    home = Path(os.environ.get('HOME') or pwd.getpwuid(os.getuid()).pw_dir)
+    config = Path(os.environ.get('XDG_CONFIG_HOME') or home / '.config')
+    require(config.is_absolute(), 'XDG_CONFIG_HOME must be absolute')
+    main = config / 'hypr/hyprland.lua'
+    require(main.is_file(), f'Omarchy user configuration is missing: {main}')
+    payload = Path('/usr/share/omarchy-caihong/hyprland.lua')
+    trusted_executable(PROVIDER / 'setup-user')
+    require(payload.is_file(), f'missing packaged Hyprland integration: {payload}')
+    output = internal_output()
+    if output is None:
+        print('omarchy-caihong: no connected internal panel found; Hyprland input mapping left unchanged')
+        return
+    mapping = config / 'hypr/caihong.lua'
+    mapping.write_text(payload.read_text().replace('@OUTPUT@', output))
+    line = 'require("hypr.caihong")'
+    text = main.read_text()
+    if line not in text.splitlines():
+        with main.open('a') as stream:
+            stream.write('\n-- Caihong internal touch/pen mapping (Plasma settings are unchanged).\n' + line + '\n')
+    # The next compositor config load applies this even during offline-session
+    # finalization. No user bus, hyprctl socket, or network is required here.
+    print(f'omarchy-caihong: Hyprland touch/pen mapped to {output}')
+
+
+def main():
+    operation = Path(sys.argv[0]).name
+    args = sys.argv[1:]
+    if operation in UNSUPPORTED:
+        raise Refusal(f'{operation} is unsupported on the unencrypted ext4 direct-root Caihong system; '
+                      'no keys, files, snapshots, boot partitions or slot metadata were changed')
+    require(operation in ('setup-boot', 'setup-system', 'setup-user', 'update-verify'),
+            'unknown lifecycle operation')
+    if operation in ('setup-boot', 'setup-system'):
+        require(args in ([], ['image-first-boot']), f'usage: {operation} [image-first-boot]')
+    else:
+        require(not args, f'{operation} takes no arguments')
+    require((os.geteuid() != 0) if operation == 'setup-user' else (os.geteuid() == 0),
+            'setup-user must run as the user' if operation == 'setup-user' else 'must run as root')
+    platform()
+    if operation == 'setup-user':
+        setup_user()
+    elif operation == 'setup-system':
+        setup_system()
+    else:
+        # image-first-boot is already live, and the direct-root image needs no
+        # deferred UKI/Limine rebuild marker. Verification is not an offline no-op.
+        verify_boot()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (Refusal, OSError, ValueError, subprocess.SubprocessError) as error:
+        sys.exit(f'omarchy-caihong: {error}')

@@ -1,0 +1,83 @@
+From e7a5d688868bfac6fc3a298ec41fa7c7f522b972 Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:02:37 -0800
+Subject: [PATCH 6/8] boot: enforce the platform verification gate
+
+Resolve the platform's boot and system providers before applying system configuration, and stop updates when a strict provider's package is missing.
+---
+ bin/omarchy-apply-system                |  5 +++++
+ bin/omarchy-update-boot                 | 12 +++++++++---
+ test/shell.d/update-boot-verify-test.sh | 10 +++++++++-
+ 3 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/bin/omarchy-apply-system b/bin/omarchy-apply-system
+index 15e1d32ff..4948c854a 100755
+--- a/bin/omarchy-apply-system
++++ b/bin/omarchy-apply-system
+@@ -85,6 +85,11 @@ export OMARCHY_INSTALL="${OMARCHY_INSTALL:-$OMARCHY_PATH/install}"
+ export OMARCHY_INSTALL_LOG_FILE="${OMARCHY_INSTALL_LOG_FILE:-/var/log/omarchy-install.log}"
+ export PATH="$OMARCHY_PATH/bin:$PATH"
+ 
++# Fail before system configuration when a required platform provider is missing.
++# Optional operations and platforms without a provider remain no-ops.
++omarchy-lifecycle-dispatch --resolve setup-boot >/dev/null
++omarchy-lifecycle-dispatch --resolve setup-system >/dev/null
++
+ source "$OMARCHY_INSTALL/helpers/logging.sh"
+ start_install_log
+ 
+diff --git a/bin/omarchy-update-boot b/bin/omarchy-update-boot
+index 2c3487c75..0f3c47c15 100755
+--- a/bin/omarchy-update-boot
++++ b/bin/omarchy-update-boot
+@@ -26,10 +26,16 @@ trap 'rm -f "$errors"' EXIT
+ status=0
+ resolved=$(omarchy-lifecycle-dispatch --resolve "$operation" 2>"$errors") || status=$?
+ 
+-# 3: the platform's boot package is not installed at all. Such a machine
+-# predates it and boots a chain the package does not manage, so verification
+-# warns instead of failing every update until the package is installed.
++# 3: the platform registers this operation but its package is not installed.
++# A machine that predates the package boots a chain the package does not
++# manage, so verification warns instead of failing every update until it is
++# installed. A platform that marks the operation strict has no such chain, so
++# the update stops instead.
+ if (( status == 3 )); then
++  if omarchy-lifecycle-dispatch --strict "$operation"; then
++    cat "$errors" >&2
++    exit "$status"
++  fi
+   echo -e "\e[33m\n$(sed 's/^Error: //' "$errors")\nThe boot files were not verified. This machine predates its platform's boot package; updates verify them once it is installed.\e[0m" >&2
+ elif (( status != 0 )); then
+   cat "$errors" >&2
+diff --git a/test/shell.d/update-boot-verify-test.sh b/test/shell.d/update-boot-verify-test.sh
+index 7dbc74b6f..0eb58a5d0 100644
+--- a/test/shell.d/update-boot-verify-test.sh
++++ b/test/shell.d/update-boot-verify-test.sh
+@@ -21,7 +21,7 @@ export OMARCHY_UPDATE_LOGGED=1
+ 
+ tmp=$boundary_tmp/boot
+ mkdir -p "$tmp"
+-for platform in aarch64-apple aarch64 x86; do
++for platform in aarch64-apple aarch64-caihong aarch64 x86; do
+   fake_platform "$tmp/$platform" "$platform"
+ done
+ 
+@@ -114,6 +114,14 @@ grep -q 'update-verify on aarch64-apple needs omarchy-mac-boot' "$tmp/err" && gr
+ ! grep -q 'omarchy-lifecycle-dispatch' "$SUDO_TEST_LOG" || fail "apple without the boot package: nothing asks for root"
+ pass "apple: without the boot package the update warns that the boot files were not verified"
+ 
++# The tablet boots the Android boot image the package verifies, so a missing
++# package stops the update instead of warning.
++run_update aarch64-caihong "$tmp/none"
++(( status == 1 )) && ! reboot_offered || fail "caihong without the boot package: the update fails" "status $status: $(cat "$tmp/err")"
++grep -q 'update-verify on aarch64-caihong needs omarchy-caihong' "$tmp/err" ||
++  fail "caihong without the boot package: the update names the missing package" "$(cat "$tmp/err")"
++pass "caihong: without the boot package the update fails instead of warning"
++
+ # A boot package from before update-verify is one package update away.
+ run_update aarch64-apple "$tmp/older"
+ (( status == 1 )) && ! reboot_offered || fail "apple: a boot package without update-verify fails the update" "status $status: $(cat "$tmp/err")"
+-- 
+2.54.0 (Apple Git-157)
+

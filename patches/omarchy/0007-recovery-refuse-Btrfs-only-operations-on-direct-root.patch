@@ -1,0 +1,104 @@
+From 963d7f25e11e0056b42d739d59b4c607e0485fdf Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:02:37 -0800
+Subject: [PATCH 7/8] recovery: refuse Btrfs-only operations on direct-root
+ ext4
+
+Factory reset now fails before removing files when the root is not Btrfs, and Snapper retention configuration is skipped when Snapper is absent.
+---
+ bin/omarchy-system-factory-reset-finish     |  6 +++
+ install/config/snapper.sh                   |  7 ++++
+ test/shell.d/factory-reset-accounts-test.sh | 45 +++++++++++++++++++++
+ 3 files changed, 58 insertions(+)
+
+diff --git a/bin/omarchy-system-factory-reset-finish b/bin/omarchy-system-factory-reset-finish
+index 08dc4fd64..29d8f9cb2 100755
+--- a/bin/omarchy-system-factory-reset-finish
++++ b/bin/omarchy-system-factory-reset-finish
+@@ -27,6 +27,12 @@ if (( EUID != 0 )); then
+   exit 1
+ fi
+ 
++# Boot-chain providers may share the Btrfs reset, but direct-root ext4 cannot.
++if [[ $(findmnt -no FSTYPE /) != "btrfs" ]]; then
++  echo "Error: factory wipe requires a Btrfs root; no files were removed." >&2
++  exit 1
++fi
++
+ # This runs before var-log.mount, so a log file under /var/log would be
+ # shadowed (and @log is recreated below anyway). stdout goes to the journal,
+ # which is volatile in /run this early and flushed into the fresh @log later.
+diff --git a/install/config/snapper.sh b/install/config/snapper.sh
+index 3e936ec14..3d202bfb8 100644
+--- a/install/config/snapper.sh
++++ b/install/config/snapper.sh
+@@ -2,6 +2,13 @@ SNAPPER_CONFIG_PATH="${OMARCHY_SNAPPER_CONFIG_PATH:-/etc/snapper/configs/root}"
+ SNAPPER_CONF_PATH="${OMARCHY_SNAPPER_CONF_PATH:-/etc/conf.d/snapper}"
+ template="${OMARCHY_SNAPPER_TEMPLATE:-${OMARCHY_PATH:-/usr/share/omarchy}/default/snapper/root}"
+ 
++# A platform without Snapper (a direct-root ext4 tablet, say) keeps its own
++# recovery procedure; there is no retention to configure here.
++if [[ ${OMARCHY_SNAPPER_CONFIGURE_TEST:-0} != "1" ]] && ! command -v snapper >/dev/null; then
++  echo "Snapper is not installed; snapshot retention is not configured."
++  exit 0
++fi
++
+ echo "Configuring Omarchy Snapper snapshot retention"
+ 
+ if [[ ! -f $SNAPPER_CONFIG_PATH ]]; then
+diff --git a/test/shell.d/factory-reset-accounts-test.sh b/test/shell.d/factory-reset-accounts-test.sh
+index d8f99deef..5b7898d2d 100644
+--- a/test/shell.d/factory-reset-accounts-test.sh
++++ b/test/shell.d/factory-reset-accounts-test.sh
+@@ -177,3 +177,48 @@ fi
+ [[ ! -e $top/@ && -d $top/@omarchy-reset-next ]] && compgen -G "$top/@omarchy-old-*/old-system" >/dev/null ||
+   fail "with no @ left, cleanup keeps both the running and the staged root"
+ pass "a root switch that cannot be undone keeps both roots for recovery"
++
++# Run the finish worker itself with private paths and a mount that always fails.
++# Non-Btrfs roots must stop before attempting the destructive reset.
++finish_root=$test_tmp/finish
++mkdir -p "$finish_root/bin" "$finish_root/provisioning"
++sed \
++  -e "s|^PROVISIONING_DIR=.*|PROVISIONING_DIR=$finish_root/provisioning|" \
++  -e "s|^TOP_MNT=.*|TOP_MNT=$finish_root/top|" \
++  "$ROOT/bin/omarchy-system-factory-reset-finish" >"$finish_root/worker"
++cat >"$finish_root/bin/findmnt" <<'SH'
++#!/bin/bash
++case "$*" in
++  "-no FSTYPE /")
++    [[ $FINISH_FS != missing ]] || exit 1
++    printf '%s\n' "$FINISH_FS"
++    ;;
++  "-no SOURCE /") echo /dev/fixture ;;
++  *) exit 1 ;;
++esac
++SH
++cat >"$finish_root/bin/mount" <<'SH'
++#!/bin/bash
++touch "$FINISH_MOUNT_ATTEMPT"
++exit 1
++SH
++chmod +x "$finish_root/bin/"*
++export FINISH_MOUNT_ATTEMPT=$finish_root/mount-attempt
++
++PATH="$finish_root/bin:$PATH" FINISH_FS=ext4 bash "$finish_root/worker" ||
++  fail "finish worker without a pending reset must leave the system alone"
++[[ ! -e $FINISH_MOUNT_ATTEMPT ]] || fail "finish worker without a pending reset attempted a mount"
++touch "$finish_root/provisioning/wipe-pending"
++for filesystem in ext4 missing btrfs; do
++  rm -f "$FINISH_MOUNT_ATTEMPT"
++  if PATH="$finish_root/bin:$PATH" FINISH_FS=$filesystem bash "$finish_root/worker" >"$finish_root/output" 2>&1; then
++    fail "finish worker accepted $filesystem despite a refused mount" "$(cat "$finish_root/output")"
++  fi
++  if [[ $filesystem == btrfs ]]; then
++    [[ -e $FINISH_MOUNT_ATTEMPT ]] || fail "finish worker blocked the supported Btrfs reset" "$(cat "$finish_root/output")"
++  else
++    [[ ! -e $FINISH_MOUNT_ATTEMPT ]] || fail "finish worker attempted to reset a $filesystem root"
++  fi
++  [[ -f $finish_root/provisioning/wipe-pending ]] || fail "failed finish worker cleared the pending reset"
++done
++pass "finish worker refuses non-Btrfs and unknown roots before mounting, but permits Btrfs"
+-- 
+2.54.0 (Apple Git-157)
+

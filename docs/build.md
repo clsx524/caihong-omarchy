@@ -1,0 +1,431 @@
+# Caihong Linux rootfs
+
+English | [简体中文](README.zh-CN.md)
+
+This repository builds an Arch Linux ARM userspace, matching mainline Linux
+kernel, and Android boot images for the OnePlus Pad Pro (`caihong`). It is a
+development release for this device; review the status table before installing.
+
+## Device status
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Display and GPU | Mostly working | The internal 3000×2120 display, Adreno GPU and brightness control work. 60/72/96/120 Hz switch seamlessly, while 144 Hz still needs a blank-screen mode switch. Occasional small panel artifacts remain. |
+| Touch and pen | Working | 10-point touch, hover, pressure, drawing, suspend/resume, magnetic pen charging and clean first-time pairing have been tested. |
+| Pogo keyboard | Mostly working | The Android-oriented top row is remapped to F1–F12, with Search acting as Fn. The keyboard and touchpad work; a key press can briefly pause the touchpad. |
+| Wi-Fi | Mostly working | Client mode, factory MAC address and concurrent STA/AP mode work. Resume can be slow; the current BDF is a compatible vendor entry rather than a Caihong-specific calibration. |
+| Bluetooth | Working | Scanning, pairing, BLE, HID and pen battery reporting work. |
+| Cameras and flash | Mostly working | Front and rear full-resolution NV12 capture runs through the SM8650 Camera ICP/BPS hardware ISP and is available to libcamera and GStreamer. The software ISP and its fallback have been removed. Automatic exposure samples output luma and drives the sensor exposure/gain controls. Scene-adaptive white balance samples low-saturation output pixels and adjusts the BPS red/blue gains on top of each sensor's fixed calibration. Front 3264x2448 and rear 4208x3120 streams have each completed an 80-frame sequence at about 24 fps. Internal hardware ISP statistics are not exposed yet. |
+| Sensors and hall switch | Working | Accelerometer, gyroscope, ambient light, automatic brightness and cover hall switch work. |
+| Audio | Working | Microphones and stereo speakers work. Speaker volume is lower than stock Android; Dolby and the complete stock tuning are not included. |
+| USB and external display | Working | USB host/device controllers and DP Alt Mode work. |
+| CPU and suspend | Working | CPU frequency scaling and both `s2idle` and deep suspend/resume work. Network reconnect after resume can be slow. The 3.3024 GHz boost is disabled by default. |
+| Battery and fast charging | Mostly working | Battery reporting and tested PPS/VOOC charging work. VOOC applies thermal current limits and can report transient retry/fault messages during entry; monitoring remains necessary. Other charging protocols are not yet supported. |
+| NPU and VPU | Working | CDSP/HTP NPU tests pass, including Hexagon v75, QNN float and quantized Conv2d workloads. Iris VPU H.264, HEVC, VP9 and AV1 hardware decoding work through V4L2 and VA-API; Firefox and Chrome use the VA-API path. Encoder support is untested. |
+| Storage | Working | UFS storage works with MCQ enabled (9 hardware queues and a maximum command depth of 64 in validated logs). A device-specific full frequency table is still pending. |
+
+
+## Release contents
+
+- `caihong-boot-linux-<kernel-release>.img`: dual-boot image using the `linux`
+  root partition.
+- `caihong-boot-userdata-<kernel-release>.img`: single-system image using the
+  `userdata` root partition.
+- `caihong-rootfs-<kernel-release>.ext4.sparse.img.zst`: zstd-compressed Android
+  sparse ext4 rootfs image. The complete image is compressed first; compressed
+  streams at or above 2 GiB are then split into ordered `.part-00`, `.part-01`,
+  … files.
+- `linux-caihong-<version>-<package-release>-aarch64.pkg.tar.zst`: pacman package containing
+  both direct-root boot images and the matching kernel modules.
+- `linux-caihong-<version>-<package-release>.aarch64.rpm`: RPM package for Fedora-based Armada
+  containing the same kernel payload.
+- `caihong-platform-<version>-1-aarch64.pkg.tar.zst`: the native Arch Linux ARM package
+  for Caihong services, firmware, tools, Caihong Toolbox, libcamera, Plasma
+  Camera, qbootctl, power-profiles-daemon with the Qualcomm CPU driver, the
+  Qualcomm Iris VA-API driver, Qualcomm NPU/QNN/HTP runtime, Hexagon DSP components
+  and device integration. It
+  is both the incremental update and the only device-content source installed
+  into a freshly built rootfs image.
+- `caihong-platform-<version>-1.aarch64.rpm`: the native Armada platform RPM with
+  the same core hardware components, Caihong Toolbox and NPU runtime, built for
+  Fedora's `lib64` layout. No standalone NPU archive is published.
+
+Both platform packages declare the audio, sensor, Qt GUI and PipeWire camera
+runtime dependencies for pacman/DNF to install. Device firmware, BPS tables for
+both full-resolution and binned camera modes, Toolbox and board configuration
+are delivered by `caihong-platform` itself. Builds check both native packages'
+file manifests and runtime dependencies; rootfs images do not add device files
+through a separate path.
+
+The Release description records the SHA-256 digests of every asset, the
+reconstructed zstd stream and the decompressed flashable image, together with
+the logical filesystem size and resolved source revisions. No ZIP archive is
+used for installable assets.
+
+## Experimental Armada rootfs
+
+The unified release workflow builds both the regular
+`caihong-rootfs-*` and experimental `caihong-armada-rootfs-*` images on a
+GitHub ARM64 runner. The two rootfs build jobs run in parallel; CI source
+validation remains separate.
+
+The image is assembled directly from the upstream
+[`ghcr.io/armada-os/armada:stable`](https://github.com/armada-os/armada)
+OCI image and keeps the Armada name, `armada` desktop account, Steam Client,
+FEX, Proton, Gamescope, KDE Plasma and the other Armada components together.
+The builder installs matching Caihong kernel, platform and NPU packages for
+firmware, audio, sensors, input mappings and board utilities. Each image records the resolved
+Armada OCI digest in `/etc/caihong-rootfs-build-info`.
+
+This is a conventional direct-root ext4 image for the existing Android
+`linux` or `userdata` partition layout. Armada's bootc atomic update path is
+not enabled in this packaging; install a newly built image to update it. The
+default Armada account and password are both `armada` and should be changed
+after the first boot. The installation steps below also apply to Armada; use
+the matching `caihong-armada-rootfs-*` file in place of `caihong-rootfs-*`.
+
+## Installation
+
+Follow these steps exactly. Repartitioning or flashing the wrong target can
+erase Android and other device data.
+
+### Prerequisites
+
+- The bootloader is unlocked.
+- `adb`, `fastboot` and `zstd` are installed on the host computer.
+- Important Android and internal-storage data has been backed up.
+- The boot image and rootfs image come from the same release.
+- A dual-boot installation has a GPT partition named `linux`. If it already
+  exists, skip the partition-creation step below.
+
+### Prepare the files
+
+Download one boot image and all rootfs image parts from the Release:
+
+- Dual boot uses `caihong-boot-linux-<kernel-release>.img`.
+- Single system uses `caihong-boot-userdata-<kernel-release>.img`.
+- Both layouts use the same compressed
+  `caihong-rootfs-<kernel-release>.ext4.sparse.img.zst` stream.
+
+Compare every downloaded file with the SHA-256 values in the Release
+description. The rootfs parts are not individually decompressible or
+flashable. Reconstruct the compressed stream in part-number order, verify it,
+then decompress and verify the flashable sparse image:
+
+```sh
+sha256sum caihong-boot-*.img caihong-rootfs-*.ext4.sparse.img.zst.part-*
+cat caihong-rootfs-*.ext4.sparse.img.zst.part-* \
+  > caihong-rootfs.ext4.sparse.img.zst
+sha256sum caihong-rootfs.ext4.sparse.img.zst
+zstd -d caihong-rootfs.ext4.sparse.img.zst \
+  -o caihong-rootfs.ext4.sparse.img
+sha256sum caihong-rootfs.ext4.sparse.img
+```
+
+If the Release contains one unsplit `.ext4.sparse.img.zst`, use it directly
+and skip the `cat` command. The Release description lists both complete-file
+digests.
+
+### Dual boot
+
+#### 1. Create or verify the Linux partition
+
+Skip this step when `linux` already exists. Otherwise, boot a recovery that can
+run `parted`. Use the recovery's copy, or push a compatible static binary:
+
+```sh
+adb reboot recovery
+adb push /path/to/parted /tmp/parted
+adb shell
+chmod +x /tmp/parted
+/tmp/parted /dev/block/sda
+```
+
+At the `parted` prompt, inspect the real layout first:
+
+```text
+unit GB
+print
+```
+
+The exact partition number and boundaries vary with device capacity and the
+existing layout. Keep the original `userdata` start unchanged, choose a split
+point that leaves enough space for both systems, and ensure `linux` is larger
+than the rootfs logical size recorded in the Release. Replace every value in
+angle brackets before running these destructive commands:
+
+```text
+rm <userdata-number>
+mkpart userdata ext4 <original-userdata-start> <linux-start>
+mkpart linux ext4 <linux-start> 100%
+print
+quit
+```
+
+Confirm that the new partition names are exactly `userdata` and `linux`, then
+return to the bootloader:
+
+```sh
+exit
+adb reboot bootloader
+```
+
+#### 2. Flash the images
+
+Choose the Linux slot explicitly. The following example uses slot B; use A
+instead when that is the slot reserved for Linux:
+
+```sh
+fastboot devices
+fastboot getvar current-slot
+
+fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img
+
+LINUX_SLOT=b
+BOOT=caihong-boot-linux-<kernel-release>.img
+ROOTFS=caihong-rootfs.ext4.sparse.img
+
+fastboot erase "dtbo_${LINUX_SLOT}"
+fastboot flash "boot_${LINUX_SLOT}" "$BOOT"
+fastboot flash linux "$ROOTFS"
+fastboot --set-active="$LINUX_SLOT"
+fastboot reboot
+```
+
+Erase only the DTBO belonging to the selected Linux slot. The Caihong DTB is
+already inside the boot image; keep the Android slot's DTBO intact.
+
+Disable Android Verified Boot before booting Caihong. Use the matching
+`vbmeta.img` from the device's official Android factory image and flash it with
+`--disable-verity --disable-verification`. If this step is skipped, the
+bootloader may reject the custom boot image.
+
+### Single system
+
+This overwrites `userdata` and deletes Android user data. It does not require a
+separate `linux` partition:
+
+```sh
+adb reboot bootloader
+fastboot devices
+fastboot getvar current-slot
+
+fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img
+
+LINUX_SLOT=b
+BOOT=caihong-boot-userdata-<kernel-release>.img
+ROOTFS=caihong-rootfs.ext4.sparse.img
+
+fastboot erase "dtbo_${LINUX_SLOT}"
+fastboot flash "boot_${LINUX_SLOT}" "$BOOT"
+fastboot flash userdata "$ROOTFS"
+fastboot --set-active="$LINUX_SLOT"
+fastboot reboot
+```
+
+### First boot
+
+The image contains an ext4 filesystem labeled `linux`. On the first successful
+boot, `caihong-grow-rootfs.service` expands it to fill `linux` or `userdata`,
+and `caihong-mark-boot-successful.service` marks the actual running slot
+successful. No manual `resize2fs` command is required.
+
+## Default accounts
+
+| User | Password | Purpose |
+| --- | --- | --- |
+| `alarm` | `alarm` | Plasma desktop user; member of `wheel` and allowed to use `sudo` with its password. |
+| `root` | `root` | System administrator account. |
+
+When logged in as `alarm`, change both passwords immediately after the first
+login:
+
+```sh
+passwd
+sudo passwd root
+```
+
+## Caihong userspace utilities
+
+The following board-specific tools are preinstalled under `/usr/local`.
+Commands that change hardware or boot state require root privileges.
+
+| Utility | Purpose and example |
+| --- | --- |
+| `caihong-slot` | Inspect or switch A/B slots: `sudo caihong-slot status`, `sudo caihong-slot android --reboot`. |
+| `caihong-flashlight` | Control the rear torch: `sudo caihong-flashlight on 40`, `status`, or `off`. |
+| `caihong-flashlight-panel` | Adds the Flashlight applet to the Plasma panel on first login. `--status` reports whether it is present and `--force` adds it again after it was removed. |
+| `caihong-hotspot` | Run the concurrent Wi-Fi AP without disconnecting the STA: `sudo caihong-hotspot start`; also provides `status`, `stop`, and `regulatory {show\|set CODE\|reset}`. Configure it in `/etc/caihong-hotspot.conf`. |
+| `caihong-hardware-mac` | Applies WLAN and Bluetooth addresses at boot, preferring explicit configuration or authenticated factory NVRAM and using persistent fallback addresses if NVRAM cannot be read. |
+| `caihong-npu-info` | `sudo caihong-npu-info` reports CDSP firmware state and FastRPC capabilities. `--self-test` verifies generic v75 DSP execution; `--htp-self-test` verifies a float QAIRT/QNN graph; `--htp-conv-self-test` verifies quantized Conv2d against a CPU reference. |
+| `caihong-bluetooth-autostart` | Powers on the configured Bluetooth controller during boot. |
+| `caihong-charge` | Reads battery status and firmware health values with `status` / `health`; `sudo caihong-charge limit 75 80` sets charging thresholds, and `sudo caihong-charge bypass on` / `off` controls charging inhibition without disconnecting the adapter. This does not guarantee battery isolation. |
+| `caihong-autocharge` | Optional daemon that keeps the battery inside a charge window by toggling bypass. Enable it with `sudo systemctl enable --now caihong-autocharge` and configure `stop`, `resume` and `interval` in `/etc/caihong-autocharge.json`; `--status` prints the current decision. It is not enabled by default and does not change the saved `caihong-charge` thresholds. |
+| `caihong-pen-pair` | Pairs a pen address obtained from a validated CPS8601 magnetic-attach event. Normally run by its systemd timer. |
+| `caihong-pen-charge` | Performs a bounded CPS8601 charging/attach observation. Normally run by its systemd timer. |
+| `caihong-pen-autoconnect` | Restores the paired pen connection and touchscreen pen scan mode. Normally run by its systemd timer. |
+| `caihong-mark-boot-successful` | Records the actual booted slot and marks only that slot successful. Runs automatically at boot. |
+| `caihong-fix-kwin-brightness` | Installs the stock-derived ambient-light curve into the `alarm` user's KWin display configuration. |
+| `caihong-clean-pogo-kde` | Removes KDE keyboard-backlight actions that do not apply to the Pogo keyboard. |
+| `caihong-nvram-mac` | Internal `/usr/local/libexec` reader used by `caihong-hardware-mac`. |
+| `caihong-switch-to-android.desktop` | Plasma application-menu entry that runs `caihong-slot android --reboot` through polkit. |
+| `caihong-toolbox` | Opens the Caihong graphical settings tool from the application menu. Hardware changes go through its D-Bus/Polkit backend; the backend is not enabled as a boot service. |
+
+The Plasma panel gets a **Flashlight** applet on first login: a switch and an
+intensity slider for the rear torch. The applet is installed system-wide, so it
+is also available under **Add Widgets**. Each user gets it once; if you remove
+it, later logins leave it removed. Add it again with
+`caihong-flashlight-panel --force` or from Add Widgets.
+
+The rootfs also includes the Caihong SSC service, custom libcamera stack,
+Plasma Camera integration, Caihong Toolbox, firmware, audio topology and
+matching kernel modules.
+
+ADB uses the device serial from `oplusboot.serialno` (falling back to
+`androidboot.serialno`) as its USB serial number. To override it, write one
+non-empty value without spaces to `/etc/caihong-adbd-serial`; the value is used
+verbatim. If neither source is available, it derives a stable
+`caihong-<machine-id prefix>` serial, and only uses `caihong-adb` when no valid
+machine ID exists.
+
+Charging defaults to automatic operation with no extra charge limit. Settings
+persist only when explicitly saved with `--save` and restored by enabling
+`caihong-charge.service`; the service is not enabled by default. Firmware health
+and capacity values are not independent measurements of battery wear.
+
+`caihong-autocharge` is an opt-in alternative to the kernel thresholds: it
+inhibits charging once the controller's raw state of charge reaches `stop` and
+allows it again at `resume`. It reads `/etc/caihong-autocharge.json` (defaults:
+`stop` 80, `resume` 79, `interval` 30 seconds) and calls
+`caihong-charge bypass` only when the state changes. The daemon is not enabled
+by default, so installs keep stock charging behaviour until
+`sudo systemctl enable --now caihong-autocharge` is run. Disable it with
+`sudo systemctl disable --now caihong-autocharge`; stopping charge still does
+not guarantee battery isolation.
+
+## Kernel updates
+
+Upgrade an Arch Linux ARM installation with the matching pacman package:
+
+```sh
+sudo pacman -Syu && sudo pacman -U ./linux-caihong-*-aarch64.pkg.tar.zst
+```
+
+Upgrade a Fedora-based Armada installation with the matching RPM:
+
+```sh
+sudo dnf upgrade --refresh && sudo dnf install ./linux-caihong-*.aarch64.rpm
+```
+
+The package reads the slot recorded during the current boot, selects the image
+matching the actual `linux` or `userdata` root partition, writes only that
+running slot, and verifies the written bytes. A saved slot or kernel command-line
+slot is required; missing or contradictory identity stops the update rather than
+guessing from installed image contents. Only the image-length prefix is replaced;
+bytes beyond it are not erased. The package does not alter the A/B active,
+bootable, or successful flags.
+
+The release build requires `CONFIG_NFT_LIMIT`,
+`CONFIG_NETFILTER_XT_MATCH_LIMIT`, `CONFIG_IP6_NF_MATCH_HL`, and
+`CONFIG_IP6_NF_MATCH_RT` as modules. Arch's nft-backed iptables and default UFW
+rules use those matches; omitting them can leave a failed, partially applied
+firewall with an input-drop policy.
+
+## Device component updates
+
+Existing rootfs installations do not need reflashing. **Fully upgrade all system
+packages before installing update packages**: run `sudo pacman -Syu` on Arch Linux
+ARM or `sudo dnf upgrade --refresh` on Armada. Update packages do not bundle all
+distribution runtime libraries, and the installer does not upgrade the system
+automatically. Updating only device components or individual dependencies can
+cause library version mismatches. If the system upgrade fails, resolve the error
+before continuing.
+
+NPU support is included in `caihong-platform`; the custom tar installer is no
+longer used. On Arch Linux ARM, install the native platform and matching kernel:
+
+```sh
+sudo pacman -Syu && sudo pacman -U \
+  ./caihong-platform-<version>-1-aarch64.pkg.tar.zst \
+  ./linux-caihong-<kernel-version>-<package-release>-aarch64.pkg.tar.zst
+```
+
+On Armada, install both RPMs with DNF:
+
+```sh
+sudo dnf upgrade --refresh && sudo dnf install --allowerasing \
+  ./caihong-platform-<version>-1.aarch64.rpm \
+  ./linux-caihong-<kernel-version>-<package-release>.aarch64.rpm
+```
+
+On Arch devices previously updated with the legacy tar installer, add
+`--overwrite 'usr/*'` to the first `pacman -U` command to adopt the existing
+unregistered payload files. Do not use it for later native-package upgrades.
+Back up important data and review package-manager prompts for replacing the
+distribution camera stack, PPD and SDDM. Armada's `--allowerasing` allows the
+corresponding platform-component replacements.
+
+Both native packages automatically perform a one-time legacy tar migration in
+their installation hooks: restore packaged directory ownership and permissions,
+and archive obsolete `.caihong-new` files from `/etc/systemd` under
+`/var/lib/caihong-platform/legacy-systemd-candidates.*`. Active configuration and
+disabled services are preserved. A completion marker prevents this migration
+from repeating on later upgrades or at boot. Arch still needs the initial
+`--overwrite 'usr/*'` because pacman checks file conflicts before running package
+hooks.
+
+Binaries, firmware and configuration templates are now tracked by pacman/RPM.
+Check the installed version with `pacman -Q caihong-platform` or
+`rpm -q caihong-platform`. Existing `/etc` configuration and service enablement
+are preserved. Systemd candidates are staged under
+`/var/lib/caihong-config-pending/caihong-platform/etc/systemd`; other configuration
+candidates use `.caihong-new`. Review them manually. Do not use the legacy tar
+installer or its rollback command.
+
+Reboot after both packages install successfully to activate the matching kernel,
+modules and updated services.
+
+SSC sensor defaults are included in the platform package. Installation fills
+missing files under `/var/lib/caihong-ssc/root` and preserves existing sensor
+configuration and calibration data.
+
+On Arch Linux ARM, installing a platform update also installs and enables
+Plasma Login Manager and removes SDDM. An administrator-selected alternative
+display manager is preserved. Fresh images enable PLM during image creation.
+This check runs synchronously during each platform-package installation;
+it is not a boot-time service or timer.
+
+## Building locally
+
+On an AArch64 host, install native GCC, Python 3, bsdtar, zstd, kmod,
+alsa-utils, e2fsprogs and Android sparse-image tools (`img2simg`). On other
+architectures, also install an AArch64 cross compiler and QEMU user emulation.
+The scripts select the native or cross toolchain automatically:
+
+```sh
+scripts/checkout-dependencies.sh
+scripts/build-kernel-release.sh
+sudo -E scripts/build-caihong-platform-package.sh release
+sudo -E env CHROOT_TOOL=chroot MODULE_TREE="$PWD/modules-current" \
+  OUTPUT_FORMAT=ext4 SPARSE_IMAGE=1 \
+  scripts/package-archlinuxarm-rootfs.sh \
+  "release/caihong-rootfs-$(cat release/KERNEL_RELEASE).ext4.sparse.img"
+```
+
+GitHub Actions performs native AArch64 builds and persists ccache between
+runs. Every Release description records the resolved component commits.
+The unified release workflow builds both rootfs images in parallel; Armada
+rootfs filenames start with `caihong-armada-rootfs-`. Actions artifacts are
+uploaded as individual release files without ZIP wrapping and retained for
+3 days, so boot images, rootfs images and update packages can be downloaded
+separately. Existing `.zst` compression and splitting are unchanged; a split
+rootfs still requires every part from the same build.
+
+## Licensing
+
+Project-authored build scripts and utilities are licensed under GPL-2.0-only
+unless a file states another SPDX license. Bundled device firmware remains
+subject to its vendor terms.
+Armada's project code is GPL-2.0-or-later, while its bundled components retain
+their own terms. The Steam Client included by upstream Armada is proprietary
+software subject to Valve's applicable Steam agreement and distribution terms.

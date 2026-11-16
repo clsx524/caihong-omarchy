@@ -1,0 +1,8 @@
+0001-platform-add-aarch64-caihong-identity.patch
+0002-packages-add-the-aarch64-caihong-composition.patch
+0003-lifecycle-register-the-aarch64-caihong-provider.patch
+0004-pacman-add-the-aarch64-caihong-repository-template.patch
+0005-image-record-the-aarch64-caihong-target.patch
+0006-boot-enforce-the-platform-verification-gate.patch
+0007-recovery-refuse-Btrfs-only-operations-on-direct-root.patch
+0008-docs-describe-the-aarch64-caihong-platform.patch

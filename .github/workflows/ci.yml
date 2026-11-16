@@ -1,0 +1,85 @@
+name: Validate release sources
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install -y binutils desktop-file-utils libarchive-tools rpm shellcheck zstd
+      - name: Validate scripts
+        run: |
+          set -euo pipefail
+          find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          bash -n packaging/power-profiles-daemon-caihong/build-rootfs-package.sh
+          sh -n \
+            packaging/linux-caihong/install-current-slot \
+            packaging/linux-caihong/linux-caihong.install \
+            config/armada.env
+          python3 -m compileall -q scripts
+          python3 tools/test-rootfs-camera-policy.py
+          python3 tools/test-platform-payload.py
+          python3 tools/test-platform-manifest.py
+          python3 tools/test-platform-ssc-package.py
+          python3 tools/test-release-packages.py
+          python3 tools/test-build-root-resolver.py
+          python3 tools/test-adbd-serial.py
+          python3 tools/test-rootfs-runtime.py
+          python3 tools/test-display-manager-migration.py
+          python3 tools/test-hardware-mac.py
+          python3 tools/test-caihong-autocharge.py
+          python3 tools/test-caihong-flashlight-panel.py
+          python3 tools/test-install-caihong-modules.py
+          node --test tools/test-release-artifacts.mjs
+          shellcheck -x \
+            scripts/build-boot-v2.sh \
+            scripts/build-kernel-release.sh \
+            scripts/build-linux-caihong-package.sh \
+            scripts/build-linux-caihong-rpm.sh \
+            scripts/build-caihong-platform-package.sh \
+            scripts/checkout-dependencies.sh \
+            scripts/install-caihong-adbd.sh \
+            scripts/install-caihong-modules.sh \
+            scripts/install-caihong-toolbox-rootfs.sh \
+            scripts/install-caihong-vaapi-stage.sh \
+            scripts/install-caihong-vaapi-rootfs.sh \
+            scripts/caihong-build-root.sh \
+            scripts/install-caihong-libcamera-stage.sh \
+            scripts/install-caihong-plasma-camera-stage.sh \
+            scripts/install-caihong-qbootctl-stage.sh \
+            scripts/install-caihong-utilities-stage.sh \
+            scripts/install-caihong-ppd-stage.sh \
+            scripts/install-caihong-ssc-stage.sh \
+            packaging/libssc/run-regression.sh \
+            scripts/package-archlinuxarm-rootfs.sh \
+            scripts/package-armada-rootfs.sh \
+            scripts/verify-caihong-update-packages.sh \
+            scripts/verify-armada-rootfs.sh \
+            packaging/linux-caihong/install-current-slot \
+            packaging/caihong-platform/configure-platform \
+            packaging/caihong-platform/switch-display-manager.sh \
+            packaging/power-profiles-daemon-caihong/build-rootfs-package.sh \
+            rootfs/archlinuxarm/usr/local/sbin/caihong-bluetooth-autostart \
+            rootfs/archlinuxarm/usr/local/sbin/caihong-hardware-mac \
+            rootfs/archlinuxarm/usr/local/sbin/caihong-mark-boot-successful \
+            rootfs/archlinuxarm/usr/local/libexec/caihong-adbd-serial \
+            rootfs/archlinuxarm/usr/local/sbin/caihong-adbd-gadget \
+            rootfs/archlinuxarm/usr/local/sbin/caihong-slot \
+            scripts/ssc/install-rootfs.sh
+          desktop-file-validate \
+            rootfs/archlinuxarm/etc/xdg/autostart/caihong-flashlight-panel.desktop \
+            rootfs/archlinuxarm/usr/share/applications/caihong-switch-to-android.desktop
+      - name: Reject oversized repository objects
+        run: |
+          set -euo pipefail
+          oversized=$(find . -path ./.git -prune -o -type f -size +95M -print)
+          test -z "$oversized" || { printf '%s\n' "$oversized"; exit 1; }
+      - name: Verify firmware inputs
+        run: |
+          (cd firmware && sha256sum -c SHA256SUMS)
+          (cd firmware-assets/caihong-ssc && sha256sum -c SHA256SUMS)

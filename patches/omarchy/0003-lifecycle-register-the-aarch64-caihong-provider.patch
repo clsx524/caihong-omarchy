@@ -1,0 +1,268 @@
+From d8e1c0df76dc0224e547116ef174c4db52c4e280 Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:02:37 -0800
+Subject: [PATCH 3/8] lifecycle: register the aarch64-caihong provider
+
+Register the board's boot and system operations with the lifecycle dispatcher and document the provider contract.
+---
+ bin/omarchy-lifecycle-dispatch          | 43 +++++++++++++++--
+ docs/lifecycle-dispatch.md              | 17 +++++--
+ test/shell.d/lifecycle-dispatch-test.sh | 62 +++++++++++++++++++++++--
+ 3 files changed, 108 insertions(+), 14 deletions(-)
+
+diff --git a/bin/omarchy-lifecycle-dispatch b/bin/omarchy-lifecycle-dispatch
+index 5a0f73e45..48dc556ed 100755
+--- a/bin/omarchy-lifecycle-dispatch
++++ b/bin/omarchy-lifecycle-dispatch
+@@ -1,7 +1,7 @@
+ #!/bin/bash -p
+ 
+ # omarchy:summary=Run a fixed lifecycle operation through the platform's own packages
+-# omarchy:args=[--resolve] <operation> [arguments...]
++# omarchy:args=[--resolve|--strict] <operation> [arguments...]
+ # omarchy:requires-sudo=true
+ # omarchy:hidden=true
+ 
+@@ -40,7 +40,7 @@ operations=(
+ user_operations=(setup-user post-install pre-remove)
+ 
+ usage() {
+-  echo "Usage: omarchy-lifecycle-dispatch [--resolve] <operation> [arguments...]" >&2
++  echo "Usage: omarchy-lifecycle-dispatch [--resolve|--strict] <operation> [arguments...]" >&2
+   echo "Operations: ${operations[*]}" >&2
+   exit 2
+ }
+@@ -55,10 +55,15 @@ listed() {
+ }
+ 
+ resolve=0
+-if [[ ${1:-} == "--resolve" ]]; then
+-  resolve=1
++print_strict=0
++while [[ ${1:-} == --* ]]; do
++  case $1 in
++    --resolve) resolve=1 ;;
++    --strict) print_strict=1 ;;
++    *) usage ;;
++  esac
+   shift
+-fi
++done
+ operation=${1:-}
+ [[ -n $operation ]] || usage
+ shift
+@@ -109,6 +114,7 @@ case $platform:$operation in
+     implementation=/usr/lib/omarchy/mac
+     package=omarchy-mac
+     required=()
++    strict=()
+     ;;
+   aarch64-apple:*)
+     implementation=/usr/lib/omarchy/mac-boot
+@@ -120,12 +126,39 @@ case $platform:$operation in
+       luks-slots
+       setup-boot
+     )
++    # A Mac boots through macOS's chain, so a machine that predates the boot
++    # package keeps updating with a warning instead of stopping.
++    strict=()
++    ;;
++  aarch64-caihong:setup-* | aarch64-caihong:update-* | \
++    aarch64-caihong:provision-* | aarch64-caihong:reset-* | aarch64-caihong:luks-slots)
++    implementation=/usr/lib/omarchy/caihong
++    package=omarchy-caihong
++    required=(
++      provision-prepare provision-commit provision-verify
++      reset-prepare reset-verify reset-commit reset-rollback
++      update-verify update-takeover luks-slots
++      setup-boot setup-system setup-user
++    )
++    # The tablet boots the Android boot image this package verifies, so a
++    # missing package must stop an update rather than warn.
++    strict=(update-verify)
+     ;;
+   *)
++    # A platform that registers nothing is never strict.
++    (( print_strict )) && exit 1
+     exit 0
+     ;;
+ esac
+ 
++# --strict exits 0 when a missing package for this operation must stop the
++# caller, and 1 when the caller may warn and go on. A platform that registers
++# nothing is never strict.
++if (( print_strict )); then
++  listed "$operation" "${strict[@]}" && exit 0
++  exit 1
++fi
++
+ # Checked once the platform registers the operation, so an installer run with
+ # sudo still works where the hook is a no-op.
+ if listed "$operation" "${user_operations[@]}" && (( EUID == 0 )); then
+diff --git a/docs/lifecycle-dispatch.md b/docs/lifecycle-dispatch.md
+index f800e22fa..5244553c3 100644
+--- a/docs/lifecycle-dispatch.md
++++ b/docs/lifecycle-dispatch.md
+@@ -7,9 +7,10 @@ Omarchy owns the boot lifecycle flows: the owner wizard, account creation, LUKS
+ ```
+ omarchy-lifecycle-dispatch <operation> [arguments...]
+ omarchy-lifecycle-dispatch --resolve <operation>
++omarchy-lifecycle-dispatch --strict <operation>
+ ```
+ 
+-The first form runs the operation. `--resolve` prints the entrypoint the operation would run, or nothing when the operation is a no-op on this machine. A caller uses it when a platform implementation replaces a generic step (see [Callers](#callers)).
++The first form runs the operation. `--resolve` prints the entrypoint the operation would run, or nothing when the operation is a no-op on this machine. A caller uses it when a platform implementation replaces a generic step (see [Callers](#callers)). `--strict` exits 0 when a missing package for the operation must stop the caller and 1 when the caller may warn and go on; a platform that registers nothing is never strict.
+ 
+ | Situation | Run | `--resolve` |
+ | --- | --- | --- |
+@@ -17,8 +18,8 @@ The first form runs the operation. `--resolve` prints the entrypoint the operati
+ | The entrypoint exists and passes the trust rules | execs it; its exit status is the result | prints its path |
+ | A required operation has no entrypoint, and the package is not installed | exit 3 (an entrypoint's own status could also be 3; with `--resolve` it is only this): `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
+ | A required operation has no entrypoint, but the package is installed (its pacman record says so) | exit 1: `Error: <operation> on <platform> needs <path>, which <package> <version> does not provide; update <package>` | same error |
+-| An optional operation has no entrypoint (every setup, app-install and fingerprint operation is optional, so none of them ever fails for a missing package) | no-op, exit 0 | prints nothing, exit 0 |
+-| A user operation (`setup-user`, `post-install`, `pre-remove`) is run as root on a platform that registers it (Apple Silicon), its entrypoint installed or not | exit 1: `Error: <operation> runs as the user, never as root` | same error |
++| An optional operation has no entrypoint (Apple's runtime setup, app-install and fingerprint operations are optional; Caihong's registered setup operations are required) | no-op, exit 0 | prints nothing, exit 0 |
++| A user operation (`setup-user`, `post-install`, `pre-remove`) is run as root on a platform that registers it, its entrypoint installed or not | exit 1: `Error: <operation> runs as the user, never as root` | same error |
+ | The entrypoint fails the trust rules | exit 1: `Error: refusing <path>: ...` (optional operations too) | same error |
+ | `omarchy-hw-platform` can't settle the platform | exit 1 | exit 1 |
+ | No operation, or one outside the fixed set | exit 2 with usage | exit 2 |
+@@ -57,12 +58,15 @@ Registration is code in `bin/omarchy-lifecycle-dispatch`, not configuration. No
+ | --- | --- | --- | --- |
+ | `aarch64-apple` | `/usr/lib/omarchy/mac-boot` | `omarchy-mac-boot` | all its operations |
+ | `aarch64-apple`: `setup-system`, `setup-user`, `post-install`, `pre-remove`, `enable-fingerprint`, `disable-fingerprint` | `/usr/lib/omarchy/mac` | `omarchy-mac` | none |
++| `aarch64-caihong` | `/usr/lib/omarchy/caihong` | `omarchy-caihong` | all its operations |
+ | `x86`, `aarch64`, `aarch64-qualcomm`, `aarch64-n1x`, `aarch64-gb10` | none | none | none: every operation is a no-op, and callers keep their generic path |
+ 
+ The entrypoint for an operation is `<implementation directory>/<operation>`. A registered platform's required operations must be shipped. Its optional operations may be left out, and then they are no-ops.
+ 
+ On a Mac, owner provisioning and factory reset have no other path, so their operations are required: a Mac without `omarchy-mac-boot`'s entrypoints stops before the owner form or before the reset is confirmed, with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key behind or rebuild a UKI the Mac does not boot. `luks-slots` is required because the Mac's boot checks prove the disk's key slots. `update-verify` is required because nothing else checks what an update left in a Mac's boot chain. `update-takeover` is required because a Mac's boot chain and image write files no package owns, so a Mac whose boot package can't vouch for a takeover keeps its files and the update stops at the conflict. `setup-boot` is required because the Mac's boot setup has no other path in hardware setup: a Mac whose `omarchy-mac-boot` lacks it stops the hardware leaf, asking for the update, where an optional operation would skip the Limine activation. System and user setup and the app-install hooks belong to the Mac's runtime package, `omarchy-mac`, not its boot package, and are optional: a Mac without `omarchy-mac` gets Omarchy's generic setup and installs.
+ 
++On a Caihong tablet every registered operation is required, because the direct-root ext4 system has no generic fallback: the generic Limine/UKI path, Btrfs snapshots, LUKS owner provisioning and the factory-reset clone all assume a layout this image does not have. `omarchy-caihong` ships an entrypoint for each registered operation; the ones the layout cannot support (`provision-*`, `reset-*`, `luks-slots`, `update-takeover`) refuse with an actionable error before changing anything, and `setup-boot`, `setup-system`, `setup-user` and `update-verify` do real work. A missing `omarchy-caihong` therefore stops setup and update verification instead of silently falling back to a path that would write the wrong boot chain. Factory reset requires the standard Btrfs layout before staging anything, and its finish worker rejects non-Btrfs roots before removing files; registering a boot provider does not disable the supported Btrfs reset on other platforms.
++
+ ## Trust rules
+ 
+ - The dispatcher runs as `bash -p`, so a root caller's `BASH_ENV` and exported functions run nothing in it, and it refuses an ordinary Bash launch. As root it uses a fixed `PATH`, runs the detector installed beside it with nothing in its environment but that `PATH` (the detector reads only the live device tree as root), and resolves only the fixed implementation directory.
+@@ -143,6 +147,10 @@ A platform's runtime package describes its hardware in files under the platform
+ 
+ `omarchy-mac-boot`, from omacom/omarchy-mac-pkgs, implements the Apple boot operations as small entrypoints around its boot modules and installs them in `/usr/lib/omarchy/mac-boot`. `omarchy-mac`, from the same repository, implements `setup-system`, `setup-user`, `post-install`, `pre-remove`, `enable-fingerprint` and `disable-fingerprint` in `/usr/lib/omarchy/mac`. Their documentation describes each one. Nothing Apple-specific lives in Omarchy beyond the registration above.
+ 
++## Caihong
++
++Caihong tablets are `aarch64-caihong`, which registers `omarchy-caihong` for boot verification, setup, provisioning, reset and LUKS operations; app-install and fingerprint hooks remain no-ops. The package ships one regular executable per registered operation in `/usr/lib/omarchy/caihong`, built from a single provider script that dispatches on its own name. `setup-boot` and `update-verify` run `linux-caihong`'s read-only `boot-state` verifier: it proves the live device tree, the unencrypted ext4 direct root, the running slot, the packaged next-boot Android boot image and the installed module tree, and byte-compares the payload against the resolved boot partition. It never writes a partition, module tree or slot flag; the kernel package's own `install-current-slot` remains the only flasher. `setup-system` enables the board services and SDDM with `systemctl --root`, so an install never restarts the running session. `setup-user` appends the packaged Hyprland touch/pen mapping to the user's `hyprland.lua` and leaves Plasma's KWin calibration alone. The unsupported operations refuse before touching keys, files, snapshots or slot metadata.
++
+ ## Snapdragon
+ 
+ Snapdragon laptops are `aarch64-qualcomm`, which registers no package: they boot Limine with unified kernel images, like x86, every operation is a no-op there, and provisioning uses the Limine UKI callbacks, so Dragon behaves exactly as before.
+@@ -150,9 +158,10 @@ Snapdragon laptops are `aarch64-qualcomm`, which registers no package: they boot
+ ## Tests
+ 
+ - `test/shell.d/lifecycle-dispatch-test.sh` covers the dispatcher on every platform fixture:
+-  - the setup, app-install and fingerprint operations: no-ops off Apple, `omarchy-mac`'s directory on Apple (never `omarchy-mac-boot`'s), no-ops without `omarchy-mac`, the user operations refused as root and given only their allowlisted environment
++  - Apple's setup, app-install and fingerprint operations: `omarchy-mac`'s directory (never `omarchy-mac-boot`'s), no-ops without `omarchy-mac`, the user operations refused as root and given only their allowlisted environment
+   - no-ops on x86 and plain aarch64, even with Mac entrypoints on disk
+   - Apple with and without the boot package, and with one too old to ship an operation
++  - Caihong: every registered operation runs `omarchy-caihong`'s entrypoint, and a missing package fails each one naming the package and entrypoint
+   - arguments, exit status and the cleared environment
+   - untrusted entrypoints
+   - usage errors, and an undetermined platform
+diff --git a/test/shell.d/lifecycle-dispatch-test.sh b/test/shell.d/lifecycle-dispatch-test.sh
+index 29d4c30f4..68ef64f79 100755
+--- a/test/shell.d/lifecycle-dispatch-test.sh
++++ b/test/shell.d/lifecycle-dispatch-test.sh
+@@ -11,7 +11,7 @@ trap 'rm -rf "$tmp"' EXIT
+ operations=(provision-prepare provision-commit provision-verify reset-prepare reset-verify reset-commit reset-rollback update-verify update-takeover luks-slots setup-boot)
+ apple_optional=()
+ 
+-for platform in aarch64-apple aarch64 x86; do
++for platform in aarch64-apple aarch64-caihong aarch64 x86; do
+   fake_platform "$tmp/$platform" "$platform"
+ done
+ mkdir -p "$tmp/contradiction/proc/device-tree"
+@@ -316,11 +316,63 @@ fi
+ chmod o-w "$with_mac/$setup_implementation/setup-user"
+ pass "apple: a setup entrypoint that fails the trust rules never runs"
+ 
++# ── Caihong ──────────────────────────────────────────────────────────────────
++
++# The tablet's direct-root system has no generic fallback: every operation it
++# registers is required, and the package's own entrypoints refuse the ones the
++# ext4 root cannot support.
++caihong_operations=(setup-boot setup-system setup-user update-verify update-takeover
++  provision-prepare provision-commit provision-verify
++  reset-prepare reset-verify reset-commit reset-rollback luks-slots)
++caihong_implementation=usr/lib/omarchy/caihong
++install_caihong() {
++  local root=$1 operation
++  rm -rf "$root"
++  mkdir -p "$root/$caihong_implementation"
++  for operation in "${caihong_operations[@]}"; do
++    cat >"$root/$caihong_implementation/$operation" <<SH
++#!/bin/bash
++{ printf '%s' "$operation"; (( \$# == 0 )) || printf ' %q' "\$@"; echo; } >>"$tmp/ran"
++env >"$tmp/env"
++[[ ! -e $tmp/fail-with ]] || exit "\$(cat $tmp/fail-with)"
++SH
++    chmod 755 "$root/$caihong_implementation/$operation"
++  done
++  chmod -R go-w "$root"
++}
++
++caihong=$tmp/caihong
++install_caihong "$caihong"
++
++for operation in "${caihong_operations[@]}"; do
++  rm -f "$tmp/ran"
++  on aarch64-caihong "$caihong" "$operation" || fail "caihong: $operation runs" "$(cat "$tmp/ran" 2>/dev/null)"
++  [[ $(cat "$tmp/ran") == "$operation" ]] || fail "caihong: $operation runs its own entrypoint" "$(cat "$tmp/ran")"
++done
++pass "caihong: every registered operation runs omarchy-caihong's entrypoint"
++
++# Without the package, nothing falls back to a generic path.
++for operation in "${caihong_operations[@]}"; do
++  status=0
++  output=$(on aarch64-caihong "$empty" "$operation" 2>&1) || status=$?
++  (( status == 3 )) || fail "caihong: required $operation fails with status 3 without omarchy-caihong" "status: $status"
++  [[ $output == "Error: $operation on aarch64-caihong needs omarchy-caihong, which provides /usr/lib/omarchy/caihong/$operation; it is not installed" ]] ||
++    fail "caihong: required $operation names the missing package and entrypoint" "$output"
++done
++pass "caihong: without omarchy-caihong every operation fails naming the package and entrypoint"
++
++# --strict marks the operations whose missing package must stop a caller.
++on aarch64-caihong "$empty" --strict update-verify || fail "caihong: update-verify is strict"
++! on aarch64-caihong "$empty" --strict setup-boot || fail "caihong: setup-boot is not strict"
++! on aarch64-apple "$empty" --strict update-verify || fail "apple: update-verify is not strict"
++! on x86 "$empty" --strict update-verify || fail "x86: nothing is strict"
++pass "caihong: only update-verify is strict, and no other platform is"
++
+ # Root is refused a user operation only where the platform registers it, so an
+ # installer run with sudo still finishes elsewhere. As root the dispatcher runs
+ # the detector beside it, so each platform gets a copy beside a stub.
+ if unshare --user --map-root-user true 2>/dev/null; then
+-  for platform in aarch64-apple x86 aarch64; do
++  for platform in aarch64-apple aarch64-caihong x86 aarch64; do
+     mkdir -p "$tmp/root-$platform"
+     cp "$dispatch" "$tmp/root-$platform/"
+     printf '#!/bin/bash\necho %s\n' "$platform" >"$tmp/root-$platform/omarchy-hw-platform"
+@@ -332,16 +384,16 @@ if unshare --user --map-root-user true 2>/dev/null; then
+         output=$(OMARCHY_LIFECYCLE_ROOT="$with_mac" unshare --user --map-root-user \
+           "$tmp/root-$platform/omarchy-lifecycle-dispatch" $arguments 2>&1) || status=$?
+         [[ ! -e $tmp/ran ]] || fail "$platform: root never runs '$arguments'"
+-        if [[ $platform == "aarch64-apple" ]]; then
++        if [[ $platform == "aarch64-apple" || ( $platform == "aarch64-caihong" && $operation == "setup-user" ) ]]; then
+           (( status == 1 )) && [[ $output == "Error: $operation runs as the user, never as root" ]] ||
+-            fail "apple: root is refused '$arguments'" "status $status: $output"
++            fail "$platform: root is refused '$arguments'" "status $status: $output"
+         else
+           (( status == 0 )) && [[ -z $output ]] || fail "$platform: '$arguments' is a no-op for root" "status $status: $output"
+         fi
+       done
+     done
+   done
+-  pass "setup-user, post-install and pre-remove refuse root on Apple Silicon, and are no-ops for root elsewhere"
++  pass "registered user operations refuse root; unregistered operations remain no-ops"
+ else
+   skip "no unprivileged user namespace; skipping the root refusal of the user operations"
+ fi
+-- 
+2.54.0 (Apple Git-157)
+

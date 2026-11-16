@@ -1,0 +1,35 @@
+From 8b5e923adf048db9bf0456094ae0701e88adc4a3 Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:02:37 -0800
+Subject: [PATCH 5/8] image: record the aarch64-caihong target
+
+Add the board to the image manifest so the installer writes the direct-root layout.
+---
+ install/helpers/image-target.sh | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/install/helpers/image-target.sh b/install/helpers/image-target.sh
+index 50c4440c6..141e76824 100644
+--- a/install/helpers/image-target.sh
++++ b/install/helpers/image-target.sh
+@@ -8,7 +8,7 @@
+ #
+ #   /var/lib/omarchy/image/target
+ #     format=1
+-#     platform=x86|aarch64|aarch64-apple|aarch64-qualcomm|aarch64-n1x|aarch64-gb10
++#     platform=x86|aarch64|aarch64-apple|aarch64-qualcomm|aarch64-caihong|aarch64-n1x|aarch64-gb10
+ #
+ # While it exists, omarchy-apply-hardware queues each hardware leaf in
+ # /var/lib/omarchy/image/deferred-steps instead of running it, and arms
+@@ -103,7 +103,7 @@ omarchy_image_read_manifest() {
+     qualcomm) platform=aarch64-qualcomm ;;
+   esac
+   case $platform in
+-    x86 | aarch64 | aarch64-apple | aarch64-qualcomm | aarch64-n1x | aarch64-gb10) ;;
++    x86 | aarch64 | aarch64-apple | aarch64-qualcomm | aarch64-caihong | aarch64-n1x | aarch64-gb10) ;;
+     *)
+       echo "Error: $omarchy_image_manifest names no known platform: ${platform:-none}" >&2
+       return 1
+-- 
+2.54.0 (Apple Git-157)
+

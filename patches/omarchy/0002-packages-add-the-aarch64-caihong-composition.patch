@@ -1,0 +1,94 @@
+From cd11c65ab41f7031d3635ad0c5ed8599ddfc78a0 Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 23:02:37 -0800
+Subject: [PATCH 2/8] packages: add the aarch64-caihong composition
+
+Select the direct-root boot stack and board hardware packages for Caihong, and exclude the laptop boot stack and the duplicate power-profiles-daemon.
+---
+ bin/omarchy-pkg-defaults                 | 7 ++++---
+ install/omarchy-aarch64-caihong.packages | 8 ++++++++
+ install/omarchy-base.packages            | 2 +-
+ test/shell.d/platform-packages-test.sh   | 7 +++++++
+ 4 files changed, 20 insertions(+), 4 deletions(-)
+ create mode 100644 install/omarchy-aarch64-caihong.packages
+
+diff --git a/bin/omarchy-pkg-defaults b/bin/omarchy-pkg-defaults
+index 8fa54a25f..993b2f8f1 100755
+--- a/bin/omarchy-pkg-defaults
++++ b/bin/omarchy-pkg-defaults
+@@ -1,7 +1,7 @@
+ #!/bin/bash
+ 
+ # omarchy:summary=Print the default package set for this computer's platform, or for the named one: the base list plus its architecture's and platform's additions.
+-# omarchy:args=[x86|aarch64|aarch64-apple|aarch64-qualcomm|aarch64-n1x|aarch64-gb10]
++# omarchy:args=[x86|aarch64|aarch64-apple|aarch64-qualcomm|aarch64-caihong|aarch64-n1x|aarch64-gb10]
+ # omarchy:hidden=true
+ 
+ set -eo pipefail
+@@ -22,7 +22,7 @@ esac
+ case $platform in
+   x86) lists=(base) ;;
+   aarch64) lists=(base aarch64) ;;
+-  aarch64-apple | aarch64-qualcomm | aarch64-n1x | aarch64-gb10) lists=(base aarch64 "$platform") ;;
++  aarch64-apple | aarch64-qualcomm | aarch64-caihong | aarch64-n1x | aarch64-gb10) lists=(base aarch64 "$platform") ;;
+   *)
+     echo "Error: unknown platform '$platform'" >&2
+     exit 1
+@@ -48,7 +48,8 @@ names() {
+ if [[ $platform == "x86" ]]; then
+   names "${files[@]}" | awk '!seen[$0]++'
+ else
+-  names "${files[@]}" | awk -v skips=<(names "$OMARCHY_PATH/install/omarchy-x86_64-only.packages") '
++  names "${files[@]}" | awk -v platform="$platform" -v skips=<(names "$OMARCHY_PATH/install/omarchy-x86_64-only.packages") '
+     BEGIN { while ((getline name < skips) > 0) skip[name] = 1 }
++    platform == "aarch64-caihong" && $0 == "omarchy-power-profiles-daemon" { next }
+     !skip[$0] && !seen[$0]++'
+ fi
+diff --git a/install/omarchy-aarch64-caihong.packages b/install/omarchy-aarch64-caihong.packages
+new file mode 100644
+index 000000000..2c417211f
+--- /dev/null
++++ b/install/omarchy-aarch64-caihong.packages
+@@ -0,0 +1,8 @@
++# Caihong's direct-root boot and hardware stack replace the laptop boot stack.
++# The base PPD package is excluded by omarchy-pkg-defaults: caihong-platform
++# already contains the board's patched power-profiles-daemon implementation.
++linux-caihong
++caihong-platform
++omarchy-caihong
++# Adreno GPUs.
++vulkan-freedreno
+diff --git a/install/omarchy-base.packages b/install/omarchy-base.packages
+index 5b8e9079f..d9e316fe6 100644
+--- a/install/omarchy-base.packages
++++ b/install/omarchy-base.packages
+@@ -94,7 +94,7 @@ noto-fonts
+ noto-fonts-cjk
+ noto-fonts-emoji
+ nss-mdns
+-nvim
++neovim
+ obsidian
+ omacalc
+ omacut
+diff --git a/test/shell.d/platform-packages-test.sh b/test/shell.d/platform-packages-test.sh
+index 63aa068d3..9795936ee 100644
+--- a/test/shell.d/platform-packages-test.sh
++++ b/test/shell.d/platform-packages-test.sh
+@@ -96,6 +96,13 @@ grep -Fxq linux-omarchy <<<"$(names_of aarch64-n1x)" || fail "the N1x list names
+ ! grep -Eq 'proart|asus|xps' <<<"$(names_of aarch64-n1x)" || fail "a single N1x model's packages stay with its hardware setup"
+ pass "Snapdragon, the N1x and the GB10 add their own lists, and only they do"
+ 
++caihong_defaults=$(omarchy-pkg-defaults aarch64-caihong)
++! grep -Fxq omarchy-power-profiles-daemon <<<"$caihong_defaults" ||
++  fail "Caihong excludes the power daemon that conflicts with its board package"
++grep -Fxq omarchy-power-profiles-daemon <<<"$(omarchy-pkg-defaults aarch64-qualcomm)" ||
++  fail "Caihong's PPD exclusion must not change Qualcomm laptops"
++pass "only Caihong excludes the competing power daemon"
++
+ # Image builders written before the platform names settled pass the old names.
+ for legacy in apple-silicon:aarch64-apple generic-aarch64:aarch64 generic:x86 qualcomm:aarch64-qualcomm; do
+   [[ $(omarchy-pkg-defaults "${legacy%%:*}") == "$(omarchy-pkg-defaults "${legacy#*:}")" ]] ||
+-- 
+2.54.0 (Apple Git-157)
+
