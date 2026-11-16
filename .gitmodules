@@ -31,3 +31,6 @@
 [submodule "external/caihong-toolbox"]
 	path = external/caihong-toolbox
 	url = https://github.com/Osilvfe/caihong-toolbox.git
+[submodule "caihong-linux-rootfs"]
+	path = caihong-linux-rootfs
+	url = https://github.com/Osilvfe/caihong-linux-rootfs.git
