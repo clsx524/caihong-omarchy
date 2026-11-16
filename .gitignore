@@ -6,3 +6,26 @@
 *.part
 *.tmp
 __pycache__/
+*.pyc
+
+# Build artifacts outside the ignored build directories.
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+vmlinux
+Image
+*.dtb
+*.dtbo
+*.pkg.tar.zst
+*.rpm
+*.img
+*.zst
+
+# Editor and macOS metadata.
+.DS_Store
+._*
+*.swp
+*~
+*.log

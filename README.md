@@ -97,6 +97,13 @@ scripts/refresh-patches.sh omarchy
 `range-diff` shows how each patch changed; the tree hash only proves that the
 series applied.
 
+## License
+
+The build system and tooling are GPL-2.0-only; see [LICENSE](LICENSE).
+Dependency submodules and the patch series retain their upstream licenses; see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Bundled firmware remains
+subject to vendor terms.
+
 ## Invariants
 
 - Submodule gitlinks always point at upstream commits.
