@@ -1,0 +1,933 @@
+From 93189089f807465b741653a4aa769b5676743913 Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 00:46:30 -0800
+Subject: [PATCH 4/7] boot: add the boot-state verifier
+
+Move slot detection into a boot-state helper that verifies the running kernel against the boot partitions, install it in both kernel packages, and check it in the rootfs verifier. Resolve the kernel license and external component trees from the superproject root.
+---
+ packaging/linux-caihong/boot-state           | 210 ++++++++++++
+ packaging/linux-caihong/install-current-slot | 134 ++------
+ scripts/build-linux-caihong-package.sh       |   9 +-
+ scripts/build-linux-caihong-rpm.sh           |  11 +-
+ scripts/verify-archlinuxarm-rootfs.sh        |  23 +-
+ tools/test-caihong-boot-provider.py          | 339 +++++++++++++++++++
+ 6 files changed, 611 insertions(+), 115 deletions(-)
+ create mode 100755 packaging/linux-caihong/boot-state
+ create mode 100755 tools/test-caihong-boot-provider.py
+
+diff --git a/packaging/linux-caihong/boot-state b/packaging/linux-caihong/boot-state
+new file mode 100755
+index 0000000..8a67559
+--- /dev/null
++++ b/packaging/linux-caihong/boot-state
+@@ -0,0 +1,210 @@
++#!/usr/bin/python3 -I
++# SPDX-License-Identifier: GPL-2.0-only
++"""Read-only live direct-root identity used by linux-caihong's sole flasher."""
++import os
++from pathlib import Path
++import re
++import stat
++import struct
++import subprocess
++import sys
++
++PACKAGE = Path('/usr/lib/linux-caihong')
++PARTITIONS = Path('/dev/disk/by-partlabel')
++COMPATIBLE = Path('/sys/firmware/devicetree/base/compatible')
++CMDLINE = Path('/proc/cmdline')
++SLOT_FILE = Path('/run/caihong/boot-slot')
++OFFLINE = Path('/run/caihong/offline-rootfs-build')
++SYS_BLOCK = Path('/sys/class/block')
++MODULES = Path('/usr/lib/modules')
++
++
++class Refusal(RuntimeError):
++    pass
++
++
++def require(condition, message):
++    if not condition:
++        raise Refusal(message)
++
++
++def command(*args):
++    # Arch merges sbin into bin; the RPM payload also serves distributions
++    # which still install util-linux's administrative tools in /usr/sbin.
++    tool = Path(args[0])
++    if not tool.is_file():
++        tool = Path('/usr/sbin') / tool.name
++    return subprocess.run((str(tool), *args[1:]), check=True, capture_output=True, text=True,
++                          env={'PATH': '/usr/bin:/usr/sbin', 'LC_ALL': 'C'}).stdout.strip()
++
++
++def live_platform():
++    require(not OFFLINE.exists(), 'offline rootfs construction cannot verify live boot state')
++    require(Path('/proc/1/root').samefile('/'), 'refusing boot verification inside a chroot')
++    tokens = COMPATIBLE.read_bytes().split(b'\0')
++    require(b'oneplus,caihong' in tokens and b'qcom,sm8650' in tokens,
++            'requires live oneplus,caihong / qcom,sm8650 device tree')
++    require(os.uname().machine == 'aarch64', 'requires aarch64 hardware')
++
++
++def block_device(path):
++    resolved = path.resolve(strict=True)
++    require(stat.S_ISBLK(resolved.stat().st_mode), f'not a block device: {path}')
++    return resolved
++
++
++def packaged_release():
++    release = (PACKAGE / 'kernel-release').read_text().strip()
++    require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.+_-]*', release), 'invalid packaged kernel release')
++    return release
++
++
++def running_slot():
++    hints = []
++    if SLOT_FILE.exists():
++        saved = SLOT_FILE.read_text().strip()
++        require(saved in ('a', 'b'), 'invalid saved boot slot')
++        hints.append(saved)
++    for token in CMDLINE.read_text().split():
++        if token.startswith(('androidboot.slot_suffix=', 'slot_suffix=')):
++            suffix = token.split('=', 1)[1]
++            require(suffix in ('_a', '_b'), 'invalid command-line boot slot')
++            hints.append(suffix[1:])
++    require(len(set(hints)) <= 1, 'contradictory running boot slot identities')
++    # Partition contents identify an installed image, not the running slot:
++    # updates replace kernels and bytes beyond the new image may remain.
++    require(hints, 'missing running boot slot identity; refusing to guess from partition contents')
++    return hints[0]
++
++
++def root_identity():
++    require(command('/usr/bin/findmnt', '-nro', 'FSTYPE', '/') == 'ext4',
++            'only an unencrypted direct ext4 root is supported')
++    source = block_device(Path(command('/usr/bin/findmnt', '-nro', 'SOURCE', '/')))
++    mounted = command('/usr/bin/findmnt', '-nro', 'MAJ:MIN', '/')
++    device = source.stat().st_rdev
++    require(mounted == f'{os.major(device)}:{os.minor(device)}', 'root device identity mismatch')
++    label = command('/usr/bin/blkid', '-s', 'PARTLABEL', '-o', 'value', str(source))
++    require(label in ('linux', 'userdata'), 'root is not PARTLABEL=linux or PARTLABEL=userdata')
++    require(block_device(PARTITIONS / label) == source, 'root PARTLABEL resolves to another device')
++    roots = [token for token in CMDLINE.read_text().split() if token.startswith('root=')]
++    require(roots == [f'root=PARTLABEL={label}'], 'running command line does not name the direct root')
++    return label
++
++
++def resolve():
++    live_platform()
++    label = root_identity()
++    release = packaged_release()
++    slot = running_slot()
++    image = PACKAGE / f'boot-{label}.img'
++    require(image.is_file() and not image.is_symlink(), f'missing regular boot payload: {image}')
++    target = block_device(PARTITIONS / f'boot_{slot}')
++    return slot, label, image, target, release
++
++
++def next_boot_slot():
++    # qbootctl -a defaults to A on errors and accepts multiple active slots.
++    # Query the same GPT attributes read-only instead. qbootctl gpt-utils.h
++    # defines ACTIVE at bit 50, UNBOOTABLE at bit 55 (AB_FLAG_OFFSET + 6).
++    active = []
++    for slot in ('a', 'b'):
++        target = block_device(PARTITIONS / f'boot_{slot}')
++        sysfs = (SYS_BLOCK / target.name).resolve(strict=True)
++        number = (sysfs / 'partition').read_text().strip()
++        require(number.isdecimal(), 'missing boot partition number')
++        disk = block_device(Path('/dev') / sysfs.parent.name)
++        attrs = command('/usr/bin/sfdisk', '--part-attrs', str(disk), number)
++        guid = re.search(r'(?:^|\s)GUID:([0-9,]+)(?:\s|$)', attrs)
++        bits = {int(bit) for bit in guid.group(1).split(',')} if guid else set()
++        if 50 in bits:
++            require(55 not in bits, f'active boot_{slot} is marked unbootable')
++            active.append(slot)
++    require(len(active) == 1, 'GPT does not select exactly one next-boot slot')
++    return active[0]
++
++
++def verify_image(image, label, release):
++    with image.open('rb') as stream:
++        header = stream.read(1660)
++        require(len(header) == 1660 and header[:8] == b'ANDROID!', 'not an Android boot image v2')
++        kernel_size = struct.unpack_from('<I', header, 8)[0]
++        page = struct.unpack_from('<I', header, 36)[0]
++        require(struct.unpack_from('<I', header, 40)[0] == 2 and
++                struct.unpack_from('<I', header, 1644)[0] >= 1660, 'expected boot header v2')
++        require(page >= 2048 and page & (page - 1) == 0, 'invalid boot page size')
++        require(all(struct.unpack_from('<I', header, offset)[0] == 0 for offset in (16, 24, 1632)),
++                'direct-root image must not contain a ramdisk or auxiliary payload')
++        dtb_size = struct.unpack_from('<I', header, 1648)[0]
++        dtb_start = (page + kernel_size + page - 1) & ~(page - 1)
++        require(kernel_size > 0 and dtb_size > 0 and dtb_start + dtb_size <= image.stat().st_size,
++                'truncated kernel or DTB payload')
++        tokens = (header[64:576] + header[608:1632]).split(b'\0', 1)[0].decode('ascii').split()
++        require([token for token in tokens if token.startswith('root=')] == [f'root=PARTLABEL={label}'],
++                'boot payload root does not match the mounted root')
++        require(all(token in tokens for token in ('rootfstype=ext4', 'rootwait', 'rw')) and
++                not any(token.startswith(('rdinit=', 'init=', 'cryptdevice=', 'rd.luks.')) for token in tokens),
++                'boot payload is not a supported direct-root command line')
++        stream.seek(page)
++        kernel = stream.read(kernel_size)
++        require(b'Linux version ' + release.encode('ascii') + b' ' in kernel,
++                'boot payload kernel does not match packaged module release')
++
++
++def same_bytes(first, second):
++    with first.open('rb') as source, second.open('rb') as target:
++        while chunk := source.read(1024 * 1024):
++            if target.read(len(chunk)) != chunk:
++                return False
++    return True
++
++
++def verify_modules(release):
++    private = PACKAGE / 'modules' / release
++    runtime = MODULES / release
++    require(private.is_dir() and runtime.is_dir() and not runtime.is_symlink(),
++            f'missing installed modules for next-boot kernel {release}')
++    modules = sorted(private.rglob('*.ko*'))
++    require(modules, f'empty module payload for {release}')
++    immutable = modules + [private / name for name in
++                           ('modules.order', 'modules.builtin', 'modules.builtin.modinfo')]
++    for source in immutable:
++        target = runtime / source.relative_to(private)
++        require(source.is_file() and not source.is_symlink() and
++                target.is_file() and not target.is_symlink() and
++                source.stat().st_size == target.stat().st_size and same_bytes(source, target),
++                f'missing or mismatched installed module payload: {target}')
++    for name in ('modules.dep', 'modules.dep.bin', 'modules.alias', 'modules.alias.bin'):
++        target = runtime / name
++        require(target.is_file() and not target.is_symlink() and target.stat().st_size > 0,
++                f'missing module dependency index: {target}')
++
++
++def verify():
++    slot, label, image, target, release = resolve()
++    require(next_boot_slot() == slot, 'next boot selects another slot; select Caihong Linux with caihong-slot first')
++    verify_image(image, label, release)
++    verify_modules(release)
++    size = image.stat().st_size
++    capacity = int(command('/usr/bin/blockdev', '--getsize64', str(target)))
++    require(0 < size <= capacity, 'boot payload exceeds the boot partition')
++    require(same_bytes(image, target), f'boot_{slot} differs from installed next-boot payload {release}')
++    print(f'linux-caihong: verified next-boot {release} slot={slot} root_partlabel={label} target={target}')
++
++
++def main():
++    require(os.geteuid() == 0, 'must run as root')
++    require(len(sys.argv) == 2 and sys.argv[1] in ('--resolve', '--verify'),
++            'usage: boot-state --resolve|--verify')
++    if sys.argv[1] == '--verify':
++        verify()
++    else:
++        slot, label, image, target, _release = resolve()
++        print(slot, label, image, target)
++
++
++if __name__ == '__main__':
++    try:
++        main()
++    except (Refusal, OSError, ValueError, subprocess.SubprocessError) as error:
++        sys.exit(f'linux-caihong: {error}')
+diff --git a/packaging/linux-caihong/install-current-slot b/packaging/linux-caihong/install-current-slot
+index 90e2a3a..0524428 100755
+--- a/packaging/linux-caihong/install-current-slot
++++ b/packaging/linux-caihong/install-current-slot
+@@ -4,9 +4,7 @@
+ set -eu
+ 
+ package_dir=/usr/lib/linux-caihong
+-slot_file=/run/caihong/boot-slot
+ compatible=/sys/firmware/devicetree/base/compatible
+-partitions=/dev/disk/by-partlabel
+ 
+ fail()
+ {
+@@ -69,86 +67,36 @@ remove_modules()
+ 	depmod -a
+ }
+ 
+-read_slot_file()
+-{
+-	[ -r "$slot_file" ] || return 1
+-	read -r slot < "$slot_file" || return 1
+-	case "$slot" in
+-		a|b) printf '%s\n' "$slot" ;;
+-		*) return 1 ;;
+-	esac
+-}
+-
+-read_cmdline_slot()
+-{
+-	while IFS= read -r token; do
+-		case "$token" in
+-			androidboot.slot_suffix=_a|slot_suffix=_a) printf '%s\n' a; return 0 ;;
+-			androidboot.slot_suffix=_b|slot_suffix=_b) printf '%s\n' b; return 0 ;;
+-		esac
+-	done <<EOF
+-$(tr ' ' '\n' < /proc/cmdline)
+-EOF
+-	return 1
+-}
+-
+-scan_running_kernel_slot()
+-{
+-	running_release=$(uname -r)
+-	found=
+-	for candidate in a b; do
+-		partition="$partitions/boot_$candidate"
+-		[ -r "$partition" ] || continue
+-		if grep -aFqm1 -- "$running_release" "$partition"; then
+-			[ -z "$found" ] || return 1
+-			found=$candidate
+-		fi
+-	done
+-	[ -n "$found" ] || return 1
+-	printf '%s\n' "$found"
+-}
+-
+-detect_slot()
+-{
+-	slot=$(read_slot_file || true)
+-	[ -z "$slot" ] || { printf '%s\n' "$slot"; return 0; }
+-	slot=$(read_cmdline_slot || true)
+-	[ -z "$slot" ] || { printf '%s\n' "$slot"; return 0; }
+-	scan_running_kernel_slot
+-}
+-
+-detect_root_partlabel()
+-{
+-	label=$(findmnt -n -o PARTLABEL / 2>/dev/null || true)
+-	if [ -z "$label" ]; then
+-		source=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+-		if [ -n "$source" ]; then
+-			label=$(blkid -s PARTLABEL -o value "$source" 2>/dev/null || true)
+-		fi
+-	fi
+-	if [ -z "$label" ]; then
+-		while IFS= read -r token; do
+-			case "$token" in
+-				root=PARTLABEL=*) label=${token#root=PARTLABEL=} ;;
+-			esac
+-		done <<EOF
+-$(tr ' ' '\n' < /proc/cmdline)
+-EOF
+-	fi
+-	case "$label" in
+-		linux|userdata) printf '%s\n' "$label" ;;
+-		*) return 1 ;;
+-	esac
+-}
+ 
+ if [ "$(id -u)" -ne 0 ]; then
+ 	fail "must run as root"
+ fi
+ 
+-if [ "${1:-}" = --remove-modules ]; then
+-	remove_modules
+-	exit 0
+-fi
++# Read-only modes are handled before every staging/module activation path.
++case "${1:-}" in
++	--verify|--detect)
++		[ "$#" -eq 1 ] || fail "read-only modes take no arguments"
++		mode=$1
++		if [ "$mode" = --verify ]; then
++			exec /usr/bin/env -i PATH=/usr/bin \
++				"$package_dir/boot-state" --verify
++		fi
++		identity=$(/usr/bin/env -i PATH=/usr/bin "$package_dir/boot-state" --resolve)
++		read -r slot root_partlabel image target <<EOF
++$identity
++EOF
++		printf 'slot=%s root_partlabel=%s image=%s target=%s\n' \
++			"$slot" "$root_partlabel" "$image" "$target"
++		exit 0
++		;;
++	--remove-modules)
++		[ "$#" -eq 1 ] || fail "--remove-modules takes no arguments"
++		remove_modules
++		exit 0
++		;;
++	"") [ "$#" -eq 0 ] || fail "unexpected empty argument" ;;
++	*) fail "usage: install-current-slot [--verify|--detect|--remove-modules]" ;;
++esac
+ 
+ release=$(cat "$package_dir/kernel-release")
+ 
+@@ -164,34 +112,16 @@ if [ ! -r "$compatible" ]; then
+ 	echo "linux-caihong: no live device tree; boot flash was skipped"
+ 	exit 0
+ fi
+-if ! grep -aFq 'oneplus,caihong' "$compatible"; then
++if ! tr '\000' '\n' < "$compatible" | grep -Fxq 'oneplus,caihong'; then
+ 	fail "this device is not compatible with oneplus,caihong"
+ fi
+ 
+-slot=$(detect_slot || true)
+-case "$slot" in
+-	a|b) ;;
+-	*) fail "unable to determine the slot that booted the running kernel" ;;
+-esac
+-root_partlabel=$(detect_root_partlabel || true)
+-case "$root_partlabel" in
+-	linux|userdata) ;;
+-	*) fail "root filesystem is not PARTLABEL=linux or PARTLABEL=userdata" ;;
+-esac
+-
+-image="$package_dir/boot-$root_partlabel.img"
+-target="$partitions/boot_$slot"
+-[ -f "$image" ] || fail "missing boot image for PARTLABEL=$root_partlabel"
+-[ -b "$target" ] || fail "missing boot partition: $target"
+-
+-if [ "${1:-}" = --detect ]; then
+-	printf 'slot=%s root_partlabel=%s image=%s target=%s\n' \
+-		"$slot" "$root_partlabel" "$image" "$target"
+-	exit 0
+-fi
+-if [ "$#" -ne 0 ]; then
+-	fail "usage: install-current-slot [--detect|--remove-modules]"
+-fi
++# The same read-only resolver supplies both the flasher and verifier.  Only
++# this script owns module activation and boot partition writes.
++identity=$(/usr/bin/env -i PATH=/usr/bin "$package_dir/boot-state" --resolve)
++read -r slot root_partlabel image target <<EOF
++$identity
++EOF
+ 
+ image_bytes=$(stat -c '%s' "$image")
+ target_bytes=$(blockdev --getsize64 "$target")
+diff --git a/scripts/build-linux-caihong-package.sh b/scripts/build-linux-caihong-package.sh
+index 30d3602..99ba990 100755
+--- a/scripts/build-linux-caihong-package.sh
++++ b/scripts/build-linux-caihong-package.sh
+@@ -5,6 +5,7 @@ set -eu
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ module_tree=${1:-"$project_dir/modules-current"}
+ release_dir=${2:-"$project_dir/release"}
+ 
+@@ -41,7 +42,7 @@ for input in "$boot_linux" "$boot_userdata"; do
+ done
+ 
+ pkgver=$(printf '%s' "$release" | sed 's/[^[:alnum:].+]/./g')
+-pkgrel=1
++pkgrel=9
+ package_name="linux-caihong-$pkgver-$pkgrel-aarch64.pkg.tar.zst"
+ output="$release_dir/$package_name"
+ temporary="$output.new"
+@@ -66,10 +67,12 @@ install -D -m 0644 "$project_dir/rootfs/archlinuxarm/etc/modules-load.d/caihong.
+ install -D -m 0755 \
+ 	"$project_dir/packaging/linux-caihong/install-current-slot" \
+ 	"$stage/usr/lib/linux-caihong/install-current-slot"
++install -m 0755 "$project_dir/packaging/linux-caihong/boot-state" \
++	"$stage/usr/lib/linux-caihong/boot-state"
+ install -m 0644 "$boot_linux" "$stage/usr/lib/linux-caihong/boot-linux.img"
+ install -m 0644 "$boot_userdata" "$stage/usr/lib/linux-caihong/boot-userdata.img"
+ printf '%s\n' "$release" > "$stage/usr/lib/linux-caihong/kernel-release"
+-install -D -m 0644 "$project_dir/linux/COPYING" \
++install -D -m 0644 "$project_root/linux/COPYING" \
+ 	"$stage/usr/share/licenses/linux-caihong/COPYING"
+ install -m 0644 "$project_dir/packaging/linux-caihong/linux-caihong.install" \
+ 	"$stage/.INSTALL"
+@@ -92,7 +95,9 @@ depend = coreutils
+ depend = findutils
+ depend = grep
+ depend = kmod
++depend = python
+ depend = util-linux
++provides = linux-caihong-boot-verifier=1
+ EOF
+ 
+ mkdir -p "$release_dir"
+diff --git a/scripts/build-linux-caihong-rpm.sh b/scripts/build-linux-caihong-rpm.sh
+index 199a43f..4828915 100755
+--- a/scripts/build-linux-caihong-rpm.sh
++++ b/scripts/build-linux-caihong-rpm.sh
+@@ -4,6 +4,7 @@ set -eu
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ module_tree=${1:-"$project_dir/modules-current"}
+ release_dir=${2:-"$project_dir/release"}
+ 
+@@ -32,7 +33,7 @@ for input in "$boot_linux" "$boot_userdata"; do
+ done
+ 
+ version=$(printf '%s' "$release" | sed 's/[^[:alnum:].+~^]/./g')
+-package_name="linux-caihong-$version-1.aarch64.rpm"
++package_name="linux-caihong-$version-5.aarch64.rpm"
+ output="$release_dir/$package_name"
+ temporary="$output.new"
+ work_dir=$(mktemp -d "${TMPDIR:-/tmp}/linux-caihong-rpm.XXXXXX")
+@@ -57,10 +58,12 @@ install -D -m 0644 "$project_dir/rootfs/archlinuxarm/etc/modules-load.d/caihong.
+ install -D -m 0755 \
+ 	"$project_dir/packaging/linux-caihong/install-current-slot" \
+ 	"$stage/usr/lib/linux-caihong/install-current-slot"
++install -m 0755 "$project_dir/packaging/linux-caihong/boot-state" \
++	"$stage/usr/lib/linux-caihong/boot-state"
+ install -m 0644 "$boot_linux" "$stage/usr/lib/linux-caihong/boot-linux.img"
+ install -m 0644 "$boot_userdata" "$stage/usr/lib/linux-caihong/boot-userdata.img"
+ printf '%s\n' "$release" > "$stage/usr/lib/linux-caihong/kernel-release"
+-install -D -m 0644 "$project_dir/linux/COPYING" \
++install -D -m 0644 "$project_root/linux/COPYING" \
+ 	"$stage/usr/share/licenses/linux-caihong/COPYING"
+ 
+ install -d -m 0755 "$topdir/BUILD" "$topdir/BUILDROOT" "$topdir/RPMS" \
+@@ -68,7 +71,7 @@ install -d -m 0755 "$topdir/BUILD" "$topdir/BUILDROOT" "$topdir/RPMS" \
+ cat > "$topdir/SPECS/linux-caihong.spec" <<EOF
+ Name: linux-caihong
+ Version: $version
+-Release: 1
++Release: 5
+ Summary: Mainline Linux kernel and modules for OnePlus Pad Pro (caihong)
+ License: GPL-2.0-only
+ URL: https://github.com/Osilvfe/linux
+@@ -78,7 +81,9 @@ Requires: coreutils
+ Requires: findutils
+ Requires: grep
+ Requires: kmod
++Requires: python3
+ Requires: util-linux
++Provides: linux-caihong-boot-verifier = 1
+ 
+ %description
+ Mainline Linux kernel, boot images, and matching modules for OnePlus Pad Pro.
+diff --git a/scripts/verify-archlinuxarm-rootfs.sh b/scripts/verify-archlinuxarm-rootfs.sh
+index 1d22309..64817b4 100755
+--- a/scripts/verify-archlinuxarm-rootfs.sh
++++ b/scripts/verify-archlinuxarm-rootfs.sh
+@@ -5,6 +5,7 @@ set -eu
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ target=${1:-}
+ if [ -z "$target" ] || [ ! -d "$target" ]; then
+ 	echo "usage: $0 ROOTFS_DIR" >&2
+@@ -105,10 +106,12 @@ usr/share/plasma/plasmoids/org.ahaan.flashlight/metadata.json
+ usr/share/plasma/plasmoids/org.ahaan.flashlight/contents/ui/main.qml
+ usr/lib/linux-caihong/boot-linux.img
+ usr/lib/linux-caihong/boot-userdata.img
++usr/lib/linux-caihong/boot-state
+ usr/lib/linux-caihong/install-current-slot
+ usr/lib/linux-caihong/kernel-release
+ usr/lib/modules-load.d/caihong.conf
+ usr/lib/systemd/system/rtkit-daemon.service
++usr/lib/systemd/system/sddm.service
+ usr/share/dbus-1/system-services/org.freedesktop.RealtimeKit1.service
+ usr/bin/caihong-toolbox
+ usr/lib/caihong-toolbox/caihong-toolbox-service
+@@ -235,8 +238,8 @@ else
+ 	done
+ fi
+ 
+-libcamera_commit=$(git -C "$project_dir/external/libcamera" rev-parse --verify HEAD)
+-plasma_camera_commit=$(git -C "$project_dir/external/plasma-camera" rev-parse --verify HEAD)
++libcamera_commit=$(git -C "$project_root/external/libcamera" rev-parse --verify HEAD)
++plasma_camera_commit=$(git -C "$project_root/external/plasma-camera" rev-parse --verify HEAD)
+ if ! grep -qx "source_commit=$libcamera_commit" \
+ 	"$target/usr/share/caihong/libcamera-build-info" 2>/dev/null; then
+ 	echo "rootfs libcamera source commit does not match the workspace" >&2
+@@ -248,13 +251,13 @@ if ! grep -qx "source_commit=$plasma_camera_commit" \
+ 	failed=1
+ fi
+ 
+-qcom_va_commit=$(git -C "$project_dir/external/qcom-va-driver" rev-parse --verify HEAD)
++qcom_va_commit=$(git -C "$project_root/external/qcom-va-driver" rev-parse --verify HEAD)
+ if ! grep -qx "source_commit=$qcom_va_commit" \
+ 	"$target/usr/share/caihong/vaapi-build-info" 2>/dev/null; then
+ 	echo "rootfs Qualcomm VA-API source commit does not match the workspace" >&2
+ 	failed=1
+ fi
+-qbootctl_source="$project_dir/external/qbootctl"
++qbootctl_source="$project_root/external/qbootctl"
+ if [[ -d $qbootctl_source/.git ]]; then
+ 	qbootctl_commit=$(git -C "$qbootctl_source" rev-parse --verify HEAD)
+ else
+@@ -279,8 +282,12 @@ if ! grep -aq 'qcom_cpufreq' "$target/usr/lib/power-profiles-daemon"; then
+ 	failed=1
+ fi
+ if [ "$(readlink "$target/etc/systemd/system/display-manager.service" 2>/dev/null)" != \
+-	/usr/lib/systemd/system/plasmalogin.service ]; then
+-	echo "display-manager.service does not point to Plasma Login Manager" >&2
++	/usr/lib/systemd/system/sddm.service ]; then
++	echo "display-manager.service does not point to SDDM" >&2
++	failed=1
++fi
++if systemctl --root="$target" is-enabled --quiet plasmalogin.service; then
++	echo "Plasma Login Manager must not be enabled alongside SDDM" >&2
+ 	failed=1
+ fi
+ pen_script="$target/usr/local/sbin/caihong-pen-charge"
+@@ -409,7 +416,7 @@ if ! grep -aFq "$wifi_version" "$wifi_amss" 2>/dev/null; then
+ fi
+ 
+ for setting in build=caihong \
+-	source_commit=$(git -C "$project_dir/external/libcamera" rev-parse --verify HEAD) \
++	source_commit=$(git -C "$project_root/external/libcamera" rev-parse --verify HEAD) \
+ 	pipelines=simple ipas=none \
+ 	isp_backend=qcom-camera-icp-bps isp_output=nv12m \
+ 	isp_statistics=output-luma-chroma-sampling \
+@@ -480,7 +487,7 @@ fi
+ 
+ required_packages='bluez bluez-utils openssh networkmanager hostapd dnsmasq nftables pipewire
+ pipewire-pulse wireplumber rtkit alsa-utils iio-sensor-proxy libssc
+-caihong-platform krita firefox
++caihong-platform sddm krita firefox
+ python-jinja python-ply python-yaml qt6-tools'
+ package_db=$target/var/lib/pacman/local
+ for package in $required_packages; do
+diff --git a/tools/test-caihong-boot-provider.py b/tools/test-caihong-boot-provider.py
+new file mode 100755
+index 0000000..e5cfb1f
+--- /dev/null
++++ b/tools/test-caihong-boot-provider.py
+@@ -0,0 +1,339 @@
++#!/usr/bin/env python3
++"""Read-only boot identity and lifecycle regression tests; no block devices needed."""
++from contextlib import ExitStack
++from pathlib import Path
++from types import SimpleNamespace
++import os
++import shutil
++import struct
++import subprocess
++import tempfile
++import types
++import unittest
++from unittest.mock import patch
++
++PROJECT = Path(__file__).resolve().parents[1]
++
++
++def load(name, relative):
++    module = types.ModuleType(name)
++    source = PROJECT / relative
++    exec(compile(source.read_text(), str(source), 'exec'), module.__dict__)
++    return module
++
++
++BOOT = load('boot_state', 'packaging/linux-caihong/boot-state')
++LIFECYCLE = load('caihong_lifecycle', 'packaging/omarchy-caihong/lifecycle')
++
++
++class BootVerifierTests(unittest.TestCase):
++    def setUp(self):
++        self.temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temporary.cleanup)
++        self.root = Path(self.temporary.name)
++        self.package = self.root / 'usr/lib/linux-caihong'
++        self.partitions = self.root / 'dev/disk/by-partlabel'
++        self.runtime = self.root / 'usr/lib/modules'
++        self.sysblock = self.root / 'sys/class/block'
++        self.sysblock.mkdir(parents=True)
++        self.partitions.mkdir(parents=True)
++        self.package.mkdir(parents=True)
++        self.release = '7.4.0-caihong-test'
++        (self.package / 'kernel-release').write_text(self.release + '\n')
++        self.cmdline = self.root / 'cmdline'
++        self.cmdline.write_text('root=PARTLABEL=userdata rootfstype=ext4 slot_suffix=_b rw\n')
++        self.slotfile = self.root / 'boot-slot'
++        self.slotfile.write_text('b\n')
++        self.offline = self.root / 'offline'
++        self.devices = {}
++        for name, number in (('boot_a', 1), ('boot_b', 2), ('userdata', 14)):
++            device = self.root / f'dev/sda{number}'
++            device.write_bytes(b'Android does not boot this root')
++            (self.partitions / name).symlink_to(device)
++            self.devices[name] = device
++            sysdev = self.root / f'sys/devices/block/sda/sda{number}'
++            sysdev.mkdir(parents=True)
++            (sysdev / 'partition').write_text(str(number))
++            (self.sysblock / device.name).symlink_to(sysdev)
++        self.image = self.package / 'boot-userdata.img'
++        self.image.write_bytes(self.boot_image())
++        self.devices['boot_b'].write_bytes(self.image.read_bytes() + b'\0' * 4096)
++        self.private = self.package / 'modules' / self.release
++        self.private.mkdir(parents=True)
++        for name, data in {
++            'kernel/test.ko': b'vermagic=' + self.release.encode() + b' SMP\0',
++            'modules.order': b'kernel/test.ko\n',
++            'modules.builtin': b'kernel/root.ko\n',
++            'modules.builtin.modinfo': b'root.vermagic=' + self.release.encode(),
++            'modules.dep': b'kernel/test.ko:\n', 'modules.dep.bin': b'dep-index',
++            'modules.alias': b'alias test test\n', 'modules.alias.bin': b'alias-index',
++        }.items():
++            path = self.private / name
++            path.parent.mkdir(parents=True, exist_ok=True)
++            path.write_bytes(data)
++        shutil.copytree(self.private, self.runtime / self.release)
++        self.attrs = {'1': 'GUID:48,49,51', '2': 'GUID:48,49,50,51'}
++        self.calls = []
++        stack = ExitStack()
++        self.addCleanup(stack.close)
++        for key, value in {
++            'PACKAGE': self.package, 'PARTITIONS': self.partitions,
++            'CMDLINE': self.cmdline, 'SLOT_FILE': self.slotfile,
++            'OFFLINE': self.offline, 'SYS_BLOCK': self.sysblock, 'MODULES': self.runtime,
++        }.items():
++            stack.enter_context(patch.object(BOOT, key, value))
++        stack.enter_context(patch.object(BOOT, 'live_platform'))
++        stack.enter_context(patch.object(BOOT, 'block_device', side_effect=lambda path: path.resolve()))
++        stack.enter_context(patch.object(BOOT, 'command', side_effect=self.read_command))
++        # The installed NEXT-BOOT release intentionally differs from uname -r.
++        stack.enter_context(patch.object(BOOT.os, 'uname', return_value=SimpleNamespace(
++            machine='aarch64', release='7.3.0-old-running-kernel')))
++
++    def boot_image(self, label='userdata', release=None):
++        kernel = b'Linux version ' + (release or self.release).encode() + b' build-test\0'
++        header = bytearray(2048)
++        header[:8] = b'ANDROID!'
++        for offset, value in ((8, len(kernel)), (36, 2048), (40, 2), (1644, 1660), (1648, 4)):
++            struct.pack_into('<I', header, offset, value)
++        cmdline = f'root=PARTLABEL={label} rootfstype=ext4 rootwait rw'.encode()
++        header[64:64 + len(cmdline)] = cmdline
++        return bytes(header) + kernel.ljust(2048, b'\0') + b'DTB!'
++
++    def read_command(self, *args):
++        self.calls.append(args)
++        if args[:3] == ('/usr/bin/findmnt', '-nro', 'FSTYPE'):
++            return 'ext4'
++        if args[:3] == ('/usr/bin/findmnt', '-nro', 'SOURCE'):
++            return str(self.devices['userdata'])
++        if args[:3] == ('/usr/bin/findmnt', '-nro', 'MAJ:MIN'):
++            return '0:0'  # File-backed fixture only; production requires S_ISBLK.
++        if args[:2] == ('/usr/bin/blkid', '-s'):
++            return 'userdata'
++        if args[:2] == ('/usr/bin/sfdisk', '--part-attrs') and len(args) == 4:
++            return self.attrs[args[-1]]
++        if args[:2] == ('/usr/bin/blockdev', '--getsize64'):
++            return str(self.devices['boot_b'].stat().st_size)
++        self.fail(f'verifier attempted a non-read-only or unexpected command: {args}')
++
++    def snapshot(self):
++        return {str(path.relative_to(self.root)): (path.lstat().st_mode, path.read_bytes())
++                for path in self.root.rglob('*') if path.is_file() and not path.is_symlink()}
++
++    def test_next_boot_new_kernel_verified_without_mutation(self):
++        before = self.snapshot()
++        BOOT.verify()
++        self.assertEqual(before, self.snapshot())
++        self.assertTrue(any(call[:2] == ('/usr/bin/sfdisk', '--part-attrs') for call in self.calls))
++
++    def test_missing_running_slot_refused_even_when_other_slot_matches_package(self):
++        self.slotfile.unlink()
++        self.cmdline.write_text('root=PARTLABEL=userdata rootfstype=ext4 rw\n')
++        self.devices['boot_a'].write_bytes(self.image.read_bytes())
++        self.devices['boot_b'].write_bytes(self.boot_image(release='7.3.0-old-running-kernel'))
++        before = self.snapshot()
++        with self.assertRaisesRegex(BOOT.Refusal, 'missing running boot slot'):
++            BOOT.resolve()
++        self.assertEqual(before, self.snapshot())
++
++    def test_running_slot_accepts_either_saved_or_command_line_identity(self):
++        self.devices['boot_a'].write_bytes(self.image.read_bytes())
++        self.devices['boot_b'].write_bytes(self.boot_image(release='7.3.0-old-running-kernel'))
++        for source in ('saved', 'cmdline'):
++            with self.subTest(source=source):
++                if source == 'saved':
++                    self.cmdline.write_text('root=PARTLABEL=userdata rootfstype=ext4 rw\n')
++                else:
++                    self.slotfile.unlink()
++                    self.cmdline.write_text('root=PARTLABEL=userdata rootfstype=ext4 slot_suffix=_b rw\n')
++                slot, _label, _image, target, _release = BOOT.resolve()
++                self.assertEqual((slot, target), ('b', self.devices['boot_b'].resolve()))
++
++    def test_wrong_boot_bytes_fail_without_mutation(self):
++        data = bytearray(self.devices['boot_b'].read_bytes())
++        data[2050] ^= 1
++        self.devices['boot_b'].write_bytes(data)
++        before = self.snapshot()
++        with self.assertRaisesRegex(BOOT.Refusal, 'differs from installed'):
++            BOOT.verify()
++        self.assertEqual(before, self.snapshot())
++
++    def test_wrong_root_payload_refused(self):
++        self.image.write_bytes(self.boot_image(label='linux'))
++        with self.assertRaisesRegex(BOOT.Refusal, 'payload root'):
++            BOOT.verify()
++
++    def test_wrong_kernel_release_refused(self):
++        self.image.write_bytes(self.boot_image(release='7.2.0-wrong'))
++        with self.assertRaisesRegex(BOOT.Refusal, 'module release'):
++            BOOT.verify()
++
++    def test_missing_or_wrong_runtime_module_refused(self):
++        module = self.runtime / self.release / 'kernel/test.ko'
++        module.unlink()
++        with self.assertRaisesRegex(BOOT.Refusal, 'module payload'):
++            BOOT.verify()
++        module.write_bytes(b'incorrect module')
++        with self.assertRaisesRegex(BOOT.Refusal, 'module payload'):
++            BOOT.verify()
++
++    def test_missing_dependency_index_refused(self):
++        (self.runtime / self.release / 'modules.dep.bin').unlink()
++        with self.assertRaisesRegex(BOOT.Refusal, 'dependency index'):
++            BOOT.verify()
++
++    def test_next_boot_android_slot_refused(self):
++        self.attrs = {'1': 'GUID:50', '2': ''}
++        with self.assertRaisesRegex(BOOT.Refusal, 'next boot selects another slot'):
++            BOOT.verify()
++
++    def test_ambiguous_missing_and_unbootable_active_slot_refused(self):
++        for attrs in ({'1': 'GUID:50', '2': 'GUID:50'}, {'1': '', '2': ''},
++                      {'1': '', '2': 'GUID:50,55'}):
++            with self.subTest(attrs=attrs):
++                self.attrs = attrs
++                with self.assertRaises(BOOT.Refusal):
++                    BOOT.verify()
++
++    def test_conflicting_saved_and_cmdline_slots_refused(self):
++        self.slotfile.write_text('a\n')
++        with self.assertRaisesRegex(BOOT.Refusal, 'contradictory'):
++            BOOT.verify()
++
++    def test_conflicting_command_line_slots_refused(self):
++        self.cmdline.write_text(self.cmdline.read_text() + ' androidboot.slot_suffix=_a')
++        with self.assertRaisesRegex(BOOT.Refusal, 'contradictory'):
++            BOOT.verify()
++
++    def test_live_platform_refuses_offline_marker(self):
++        self.offline.touch()
++        original = load('boot_state_original', 'packaging/linux-caihong/boot-state')
++        with patch.object(original, 'OFFLINE', self.offline):
++            with self.assertRaisesRegex(original.Refusal, 'offline'):
++                original.live_platform()
++
++    def test_production_block_guard_refuses_regular_file(self):
++        original = load('boot_state_original', 'packaging/linux-caihong/boot-state')
++        with self.assertRaisesRegex(original.Refusal, 'not a block device'):
++            original.block_device(self.image)
++
++
++class EntrypointTests(unittest.TestCase):
++    def test_readonly_flags_never_activate_modules_even_when_offline_skip_is_set(self):
++        source = (PROJECT / 'packaging/linux-caihong/install-current-slot').read_text()
++        with tempfile.TemporaryDirectory() as directory:
++            root = Path(directory)
++            package = root / 'package'
++            package.mkdir()
++            mutation = root / 'MUTATED'
++            # Instrument only the destructive function, retaining all real flag
++            # dispatch/offline control flow. No test can write host module paths.
++            source = source.replace('package_dir=/usr/lib/linux-caihong', f'package_dir={package}')
++            source = source.replace('$(id -u)', '0')
++            source = source.replace('activate_modules()\n{',
++                                    f'activate_modules()\n{{\n echo mutation > "{mutation}"; return 0\n')
++            entry = root / 'install-current-slot'
++            entry.write_text(source)
++            helper = package / 'boot-state'
++            helper.write_text('#!/bin/sh\nexit 42\n')
++            helper.chmod(0o755)
++            (package / 'kernel-release').write_text('test\n')
++            for mode in ('--verify', '--detect'):
++                with self.subTest(mode=mode):
++                    result = subprocess.run(['/bin/sh', str(entry), mode], capture_output=True,
++                                            env={**os.environ, 'CAIHONG_SKIP_BOOT_FLASH': '1'})
++                    self.assertEqual(result.returncode, 42, result.stderr)
++                    self.assertFalse(mutation.exists())
++
++    def test_all_unsupported_workflows_refuse_before_changes(self):
++        for operation in LIFECYCLE.UNSUPPORTED:
++            with self.subTest(operation=operation), patch.object(LIFECYCLE.sys, 'argv', [operation]), \
++                 patch.object(LIFECYCLE, 'platform') as platform, \
++                 patch.object(LIFECYCLE.subprocess, 'run') as run:
++                with self.assertRaisesRegex(LIFECYCLE.Refusal, 'unsupported'):
++                    LIFECYCLE.main()
++                platform.assert_not_called()
++                run.assert_not_called()
++
++    def test_failed_boot_preflight_prevents_service_mutations(self):
++        with patch.object(LIFECYCLE, 'verify_boot', side_effect=LIFECYCLE.Refusal('bad boot')), \
++             patch.object(LIFECYCLE, 'systemctl') as systemctl:
++            with self.assertRaisesRegex(LIFECYCLE.Refusal, 'bad boot'):
++                LIFECYCLE.setup_system()
++            systemctl.assert_not_called()
++
++    def test_system_setup_enables_board_services_without_restarting_sessions(self):
++        with patch.object(LIFECYCLE, 'verify_boot'), patch.object(Path, 'is_file', return_value=True), \
++             patch.object(Path, 'exists', return_value=False), \
++             patch.object(Path, 'is_symlink', return_value=False), \
++             patch.object(LIFECYCLE, 'systemctl', return_value=SimpleNamespace(stdout='disabled\n')) as ctl:
++            LIFECYCLE.setup_system()
++        mutations = [call.args for call in ctl.call_args_list if call.args[0] != 'is-enabled']
++        self.assertEqual(mutations, [('enable', *LIFECYCLE.SYSTEM_UNITS),
++                                     ('set-default', 'graphical.target')])
++        self.assertFalse(any('--now' in call.args for call in ctl.call_args_list))
++
++    def test_masked_hardware_service_refuses_before_service_mutations(self):
++        def status(*args, **kwargs):
++            state = 'masked' if args[1] == 'caihong-keyboard.service' else 'disabled'
++            return SimpleNamespace(stdout=state + '\n')
++
++        with patch.object(LIFECYCLE, 'verify_boot'), patch.object(Path, 'is_file', return_value=True), \
++             patch.object(Path, 'exists', return_value=False), \
++             patch.object(Path, 'is_symlink', return_value=False), \
++             patch.object(LIFECYCLE, 'systemctl', side_effect=status) as ctl:
++            with self.assertRaisesRegex(LIFECYCLE.Refusal, 'masked'):
++                LIFECYCLE.setup_system()
++        self.assertTrue(all(call.args[0] == 'is-enabled' for call in ctl.call_args_list))
++
++    def test_user_setup_is_idempotent_and_preserves_existing_config(self):
++        template = 'hl.config({ input = { touchdevice = { output = "@OUTPUT@" } } })\n'
++        with tempfile.TemporaryDirectory() as directory:
++            root = Path(directory)
++            config = root / '.config/hypr/hyprland.lua'
++            config.parent.mkdir(parents=True)
++            original = '-- personal configuration\nhl.config({ input = { kb_layout = "us" } })\n'
++            config.write_text(original)
++            original_is_file = Path.is_file
++            original_read_text = Path.read_text
++
++            def is_file(path):
++                return str(path) == '/usr/share/omarchy-caihong/hyprland.lua' or original_is_file(path)
++
++            def read_text(path, *args, **kwargs):
++                if str(path) == '/usr/share/omarchy-caihong/hyprland.lua':
++                    return template
++                return original_read_text(path, *args, **kwargs)
++
++            with patch.dict(os.environ, {'HOME': str(root), 'XDG_CONFIG_HOME': str(root / '.config')}), \
++                 patch.object(LIFECYCLE, 'trusted_executable'), patch.object(LIFECYCLE, 'internal_output', return_value='DSI-1'), \
++                 patch.object(Path, 'is_file', is_file), patch.object(Path, 'read_text', read_text):
++                LIFECYCLE.setup_user()
++                once = config.read_text()
++                LIFECYCLE.setup_user()
++            self.assertTrue(once.startswith(original))
++            self.assertEqual(once, config.read_text())
++            self.assertEqual(once.count('require("hypr.caihong")'), 1)
++            self.assertIn('output = "DSI-1"', (root / '.config/hypr/caihong.lua').read_text())
++
++    def test_user_setup_leaves_config_alone_without_an_internal_panel(self):
++        with tempfile.TemporaryDirectory() as directory:
++            root = Path(directory)
++            config = root / '.config/hypr/hyprland.lua'
++            config.parent.mkdir(parents=True)
++            original = '-- personal configuration\n'
++            config.write_text(original)
++            original_is_file = Path.is_file
++
++            def is_file(path):
++                return str(path) == '/usr/share/omarchy-caihong/hyprland.lua' or original_is_file(path)
++
++            with patch.dict(os.environ, {'HOME': str(root), 'XDG_CONFIG_HOME': str(root / '.config')}), \
++                 patch.object(LIFECYCLE, 'trusted_executable'), patch.object(LIFECYCLE, 'internal_output', return_value=None), \
++                 patch.object(Path, 'is_file', is_file):
++                LIFECYCLE.setup_user()
++            self.assertEqual(config.read_text(), original)
++            self.assertFalse((root / '.config/hypr/caihong.lua').exists())
++
++
++if __name__ == '__main__':
++    unittest.main()
+-- 
+2.54.0 (Apple Git-157)
+

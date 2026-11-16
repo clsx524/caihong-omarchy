@@ -1,0 +1,69 @@
+From ec9c7a69217708ca501afc3c3945e0a02c235314 Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 00:48:41 -0800
+Subject: [PATCH 7/7] build: read the resolved dependency manifest from the
+ superproject
+
+prepare-sources.sh writes build/dependencies.resolved.env in the superproject. Read it from project_root so the stage installers record the pinned component commits.
+---
+ scripts/install-caihong-libcamera-stage.sh     | 2 +-
+ scripts/install-caihong-plasma-camera-stage.sh | 2 +-
+ scripts/install-caihong-ppd-stage.sh           | 2 +-
+ scripts/install-caihong-qbootctl-stage.sh      | 2 +-
+ 4 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/scripts/install-caihong-libcamera-stage.sh b/scripts/install-caihong-libcamera-stage.sh
+index 0c22390..71a5e4b 100755
+--- a/scripts/install-caihong-libcamera-stage.sh
++++ b/scripts/install-caihong-libcamera-stage.sh
+@@ -55,7 +55,7 @@ if [[ -d $source_tree/.git ]]; then
+ 	fi
+ 	source_commit=$(git -C "$source_tree" rev-parse --verify HEAD)
+ else
+-	resolved="$project_dir/build/dependencies.resolved.env"
++	resolved="$project_root/build/dependencies.resolved.env"
+ 	source_commit=$(sed -n 's/^LIBCAMERA_COMMIT=//p' "$resolved" 2>/dev/null | tail -n 1)
+ 	[[ -n $source_commit ]] || {
+ 		echo "cannot determine the libcamera source revision" >&2
+diff --git a/scripts/install-caihong-plasma-camera-stage.sh b/scripts/install-caihong-plasma-camera-stage.sh
+index 087d63a..c668f6f 100755
+--- a/scripts/install-caihong-plasma-camera-stage.sh
++++ b/scripts/install-caihong-plasma-camera-stage.sh
+@@ -50,7 +50,7 @@ if [[ -d $source_tree/.git ]]; then
+ 	fi
+ 	source_commit=$(git -C "$source_tree" rev-parse --verify HEAD)
+ else
+-	resolved="$project_dir/build/dependencies.resolved.env"
++	resolved="$project_root/build/dependencies.resolved.env"
+ 	source_commit=$(sed -n 's/^PLASMA_CAMERA_COMMIT=//p' "$resolved" 2>/dev/null | tail -n 1)
+ 	[[ -n $source_commit ]] || {
+ 		echo "cannot determine the Plasma Camera source revision" >&2
+diff --git a/scripts/install-caihong-ppd-stage.sh b/scripts/install-caihong-ppd-stage.sh
+index 4f22881..df9e7c6 100755
+--- a/scripts/install-caihong-ppd-stage.sh
++++ b/scripts/install-caihong-ppd-stage.sh
+@@ -95,7 +95,7 @@ if [[ -d $source_tree/.git ]]; then
+ 	source_commit=$(git -C "$source_tree" rev-parse --verify HEAD)
+ else
+ 	source_commit=$(sed -n 's/^POWER_PROFILES_DAEMON_COMMIT=//p' \
+-		"$project_dir/build/dependencies.resolved.env" 2>/dev/null | tail -n 1)
++		"$project_root/build/dependencies.resolved.env" 2>/dev/null | tail -n 1)
+ fi
+ if [[ -n ${source_commit:-} ]]; then
+ 	printf 'source_commit=%s\n' "$source_commit" \
+diff --git a/scripts/install-caihong-qbootctl-stage.sh b/scripts/install-caihong-qbootctl-stage.sh
+index 87fc75f..beac4ee 100755
+--- a/scripts/install-caihong-qbootctl-stage.sh
++++ b/scripts/install-caihong-qbootctl-stage.sh
+@@ -81,7 +81,7 @@ if [[ -d $source_tree/.git ]]; then
+ 	source_commit=$(git -C "$source_tree" rev-parse --verify HEAD)
+ else
+ 	source_commit=$(sed -n 's/^QBOOTCTL_COMMIT=//p' \
+-		"$project_dir/build/dependencies.resolved.env" 2>/dev/null | tail -n 1)
++		"$project_root/build/dependencies.resolved.env" 2>/dev/null | tail -n 1)
+ fi
+ if [[ -n $source_commit ]]; then
+ 	install -d -m 0755 "$stage/usr/share/caihong"
+-- 
+2.54.0 (Apple Git-157)
+

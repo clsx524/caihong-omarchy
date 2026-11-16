@@ -1,0 +1,49 @@
+From 359f4675e7ed290f50743bc2258ac48576b638aa Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 00:46:19 -0800
+Subject: [PATCH 2/7] kernel: enable the netfilter modules required by Omarchy
+
+Omarchy's firewall and NAT rules need NFT_LIMIT, NETFILTER_XT_MATCH_LIMIT, IP6_NF_MATCH_HL and IP6_NF_MATCH_RT. Enable them in the direct-root configuration and resolve the kernel tree from the superproject root.
+---
+ scripts/build-kernel-release.sh | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/scripts/build-kernel-release.sh b/scripts/build-kernel-release.sh
+index a74cd6e..e16ff28 100755
+--- a/scripts/build-kernel-release.sh
++++ b/scripts/build-kernel-release.sh
+@@ -5,7 +5,8 @@ set -eu
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
+-linux_dir=${LINUX_DIR:-"$project_dir/linux"}
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
++linux_dir=${LINUX_DIR:-"$project_root/linux"}
+ kernel_out=${KERNEL_OUT:-"$project_dir/build/linux"}
+ module_tree=${MODULE_TREE:-"$project_dir/modules-current"}
+ release_dir=${RELEASE_DIR:-"$project_dir/release"}
+@@ -39,11 +40,20 @@ mkdir -p "$kernel_out" "$release_dir"
+ make -C "$linux_dir" O="$kernel_out" ARCH=arm64 \
+ 	CROSS_COMPILE="$cross_compile" CC="$kernel_cc" HOSTCC="$kernel_hostcc" \
+ 	caihong_defconfig
++"$linux_dir/scripts/config" --file "$kernel_out/.config" \
++	--module NFT_LIMIT \
++	--module NETFILTER_XT_MATCH_LIMIT \
++	--module IP6_NF_MATCH_HL \
++	--module IP6_NF_MATCH_RT
++make -C "$linux_dir" O="$kernel_out" ARCH=arm64 \
++	CROSS_COMPILE="$cross_compile" CC="$kernel_cc" HOSTCC="$kernel_hostcc" \
++	olddefconfig
+ for setting in \
+ 	CONFIG_DEVTMPFS=y CONFIG_DEVTMPFS_MOUNT=y CONFIG_EFI_PARTITION=y \
+ 	CONFIG_SCSI=y CONFIG_BLK_DEV_SD=y CONFIG_SCSI_UFSHCD=y \
+ 	CONFIG_SCSI_UFS_QCOM=y CONFIG_PHY_QCOM_QMP_UFS=y CONFIG_EXT4_FS=y \
+-	'CONFIG_INITRAMFS_SOURCE=""'; do
++	CONFIG_NFT_LIMIT=m CONFIG_NETFILTER_XT_MATCH_LIMIT=m \
++	CONFIG_IP6_NF_MATCH_HL=m CONFIG_IP6_NF_MATCH_RT=m 'CONFIG_INITRAMFS_SOURCE=""'; do
+ 	grep -qx "$setting" "$kernel_out/.config" || {
+ 		echo "kernel configuration missing direct-root requirement: $setting" >&2
+ 		exit 1
+-- 
+2.54.0 (Apple Git-157)
+

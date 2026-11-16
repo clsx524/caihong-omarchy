@@ -1,6 +1,7 @@
 # Caihong Linux rootfs
 
-English | [简体中文](README.zh-CN.md)
+The build system lives in the `caihong-linux-rootfs/` submodule; this document
+describes the images it produces.
 
 This repository builds an Arch Linux ARM userspace, matching mainline Linux
 kernel, and Android boot images for the OnePlus Pad Pro (`caihong`). It is a
@@ -390,10 +391,10 @@ missing files under `/var/lib/caihong-ssc/root` and preserves existing sensor
 configuration and calibration data.
 
 On Arch Linux ARM, installing a platform update also installs and enables
-Plasma Login Manager and removes SDDM. An administrator-selected alternative
-display manager is preserved. Fresh images enable PLM during image creation.
-This check runs synchronously during each platform-package installation;
-it is not a boot-time service or timer.
+SDDM. An administrator-selected alternative display manager is preserved.
+Fresh images enable SDDM during image creation. This check runs synchronously
+during each platform-package installation; it is not a boot-time service or
+timer.
 
 ## Building locally
 
@@ -403,6 +404,7 @@ architectures, also install an AArch64 cross compiler and QEMU user emulation.
 The scripts select the native or cross toolchain automatically:
 
 ```sh
+cd caihong-linux-rootfs
 scripts/checkout-dependencies.sh
 scripts/build-kernel-release.sh
 sudo -E scripts/build-caihong-platform-package.sh release

@@ -1,1 +1,0 @@
-{"alsps.als":{"owner":"sns_alsps","config":{"type":"grp","ver":"0","data":""}}}

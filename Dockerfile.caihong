@@ -6,4 +6,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  libegl-dev libelf-dev libgbm-dev libgles-dev libdrm-dev libssl-dev libva-dev \
  meson ninja-build pkg-config python3 rpm rsync shellcheck systemd zstd \
  && rm -rf /var/lib/apt/lists/*
-WORKDIR /work/caihong-linux-rootfs
+WORKDIR /work/caihong-omarchy

@@ -1,0 +1,291 @@
+From d4c23eeae35f9f321b1e9ba8187966b6c07e9dbe Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 00:46:12 -0800
+Subject: [PATCH 1/7] build: resolve dependency submodules from the
+ superproject root
+
+The build system now lives in a submodule, so the kernel and external component trees are checked out by the superproject. Add project_root, defaulting to the parent directory or CAIHONG_PROJECT_ROOT, and use it for linux/ and external/ paths. Outputs stay in the build-system tree.
+---
+ scripts/build-archlinuxarm-rootfs.sh            | 5 +++--
+ scripts/build-boot-v2.sh                        | 9 +++++----
+ scripts/build-caihong-platform-package.sh       | 3 ++-
+ scripts/install-caihong-libcamera-rootfs.sh     | 3 ++-
+ scripts/install-caihong-libcamera-stage.sh      | 3 ++-
+ scripts/install-caihong-plasma-camera-rootfs.sh | 3 ++-
+ scripts/install-caihong-plasma-camera-stage.sh  | 3 ++-
+ scripts/install-caihong-ppd-stage.sh            | 3 ++-
+ scripts/install-caihong-qbootctl-stage.sh       | 3 ++-
+ scripts/install-caihong-ssc-stage.sh            | 3 ++-
+ scripts/install-caihong-toolbox-rootfs.sh       | 3 ++-
+ scripts/install-caihong-vaapi-rootfs.sh         | 3 ++-
+ scripts/install-caihong-vaapi-stage.sh          | 3 ++-
+ scripts/verify-armada-rootfs.sh                 | 5 +++--
+ 14 files changed, 33 insertions(+), 19 deletions(-)
+
+diff --git a/scripts/build-archlinuxarm-rootfs.sh b/scripts/build-archlinuxarm-rootfs.sh
+index 960747b..b23e546 100755
+--- a/scripts/build-archlinuxarm-rootfs.sh
++++ b/scripts/build-archlinuxarm-rootfs.sh
+@@ -5,6 +5,7 @@ set -eu
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ target=${1:-}
+ archive=${2:-"$project_dir/downloads/ArchLinuxARM-aarch64-latest.tar.gz"}
+ mirror=${ARCHLINUXARM_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm}
+@@ -160,10 +161,10 @@ printf '%s / %s rw,noatime 0 1\n' "$root_spec" "$root_fstype" > "$target/etc/fst
+ : > "$target/etc/machine-id"
+ 
+ if [ "${INCLUDE_BOOT_ARTIFACTS:-0}" = 1 ]; then
+-	install -D -m 0644 "$project_dir/linux/out/arch/arm64/boot/Image" \
++	install -D -m 0644 "$project_root/linux/out/arch/arm64/boot/Image" \
+ 		"$target/boot/caihong/Image"
+ 	install -D -m 0644 \
+-		"$project_dir/linux/out/arch/arm64/boot/dts/qcom/sm8650-oneplus-caihong.dtb" \
++		"$project_root/linux/out/arch/arm64/boot/dts/qcom/sm8650-oneplus-caihong.dtb" \
+ 		"$target/boot/caihong/sm8650-oneplus-caihong.dtb"
+ fi
+ 
+diff --git a/scripts/build-boot-v2.sh b/scripts/build-boot-v2.sh
+index b03f890..2776e79 100755
+--- a/scripts/build-boot-v2.sh
++++ b/scripts/build-boot-v2.sh
+@@ -5,9 +5,10 @@ set -eu
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ output=${1:-"$project_dir/release/caihong-boot.img"}
+-kernel=${2:-"$project_dir/linux/out/arch/arm64/boot/Image"}
+-dtb=${3:-"$project_dir/linux/out/arch/arm64/boot/dts/qcom/sm8650-oneplus-caihong.dtb"}
++kernel=${2:-"$project_root/linux/out/arch/arm64/boot/Image"}
++dtb=${3:-"$project_root/linux/out/arch/arm64/boot/dts/qcom/sm8650-oneplus-caihong.dtb"}
+ cmdline_file=${CMDLINE_FILE:-"$project_dir/config/caihong-direct-root-cmdline.txt"}
+ root_partlabel=${ROOT_PARTLABEL:-linux}
+ temporary="$output.new"
+@@ -30,8 +31,8 @@ if [ -n "${MKBOOTIMG:-}" ]; then
+ 		exit 1
+ 	}
+ 	mkbootimg=$MKBOOTIMG
+-elif [ -f "$project_dir/external/mkbootimg/mkbootimg.py" ]; then
+-	mkbootimg="$project_dir/external/mkbootimg/mkbootimg.py"
++elif [ -f "$project_root/external/mkbootimg/mkbootimg.py" ]; then
++	mkbootimg="$project_root/external/mkbootimg/mkbootimg.py"
+ elif command -v mkbootimg >/dev/null 2>&1; then
+ 	mkbootimg=$(command -v mkbootimg)
+ else
+diff --git a/scripts/build-caihong-platform-package.sh b/scripts/build-caihong-platform-package.sh
+index f784331..49d3533 100755
+--- a/scripts/build-caihong-platform-package.sh
++++ b/scripts/build-caihong-platform-package.sh
+@@ -5,8 +5,9 @@ set -eu
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ release_dir=${1:-"$project_dir/release"}
+-version=${CAIHONG_PLATFORM_VERSION:-0.$(git -C "$project_dir" log -1 --format=%ct).g$(git -C "$project_dir" rev-parse --short HEAD)}
++version=${CAIHONG_PLATFORM_VERSION:-0.$(git -C "$project_root" log -1 --format=%ct).g$(git -C "$project_root" rev-parse --short HEAD)}
+ kernel_release=${KERNEL_RELEASE:-}
+ distribution=${DISTRIBUTION:-archlinuxarm}
+ case $distribution in
+diff --git a/scripts/install-caihong-libcamera-rootfs.sh b/scripts/install-caihong-libcamera-rootfs.sh
+index 2334f26..4e69974 100755
+--- a/scripts/install-caihong-libcamera-rootfs.sh
++++ b/scripts/install-caihong-libcamera-rootfs.sh
+@@ -5,6 +5,7 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ rootfs=${1:-}
+ chroot_tool=${CHROOT_TOOL:-arch-chroot}
+ pacman_tool=${PACMAN_TOOL:-pacman}
+@@ -32,7 +33,7 @@ case "$libdir" in
+ 		;;
+ esac
+ 
+-source_tree="$project_dir/external/libcamera"
++source_tree="$project_root/external/libcamera"
+ if [[ ! -f $source_tree/meson.build ]]; then
+ 	echo "incomplete Caihong libcamera source tree: $source_tree" >&2
+ 	exit 1
+diff --git a/scripts/install-caihong-libcamera-stage.sh b/scripts/install-caihong-libcamera-stage.sh
+index 4773731..0c22390 100755
+--- a/scripts/install-caihong-libcamera-stage.sh
++++ b/scripts/install-caihong-libcamera-stage.sh
+@@ -9,12 +9,13 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ stage=${1:-}
+ build_root=${CAIHONG_BUILD_ROOT:-}
+ libdir=${LIBCAMERA_LIBDIR:-lib}
+ build_profile=${LIBCAMERA_BUILD_PROFILE:-platform-package}
+ jobs=${LIBCAMERA_BUILD_JOBS:-}
+-source_tree="$project_dir/external/libcamera"
++source_tree="$project_root/external/libcamera"
+ 
+ if [[ -z $stage || ! -d $stage ]]; then
+ 	echo "usage: $0 STAGE_DIR" >&2
+diff --git a/scripts/install-caihong-plasma-camera-rootfs.sh b/scripts/install-caihong-plasma-camera-rootfs.sh
+index c22f33e..973cc46 100755
+--- a/scripts/install-caihong-plasma-camera-rootfs.sh
++++ b/scripts/install-caihong-plasma-camera-rootfs.sh
+@@ -5,6 +5,7 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ rootfs=${1:-}
+ chroot_tool=${CHROOT_TOOL:-arch-chroot}
+ jobs=${PLASMA_CAMERA_BUILD_JOBS:-}
+@@ -22,7 +23,7 @@ case "$rootfs" in
+ 		;;
+ esac
+ 
+-source_tree="$project_dir/external/plasma-camera"
++source_tree="$project_root/external/plasma-camera"
+ if [[ ! -f $source_tree/CMakeLists.txt || \
+ 	! -f $source_tree/src/plasmacamera.cpp || \
+ 	! -f $source_tree/src/contents/ui/camera/CameraPage.qml ]]; then
+diff --git a/scripts/install-caihong-plasma-camera-stage.sh b/scripts/install-caihong-plasma-camera-stage.sh
+index fbfa8fb..087d63a 100755
+--- a/scripts/install-caihong-plasma-camera-stage.sh
++++ b/scripts/install-caihong-plasma-camera-stage.sh
+@@ -8,10 +8,11 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ stage=${1:-}
+ build_root=${CAIHONG_BUILD_ROOT:-}
+ jobs=${PLASMA_CAMERA_BUILD_JOBS:-}
+-source_tree="$project_dir/external/plasma-camera"
++source_tree="$project_root/external/plasma-camera"
+ 
+ if [[ -z $stage || ! -d $stage ]]; then
+ 	echo "usage: $0 STAGE_DIR" >&2
+diff --git a/scripts/install-caihong-ppd-stage.sh b/scripts/install-caihong-ppd-stage.sh
+index 99f5932..4f22881 100755
+--- a/scripts/install-caihong-ppd-stage.sh
++++ b/scripts/install-caihong-ppd-stage.sh
+@@ -9,9 +9,10 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ stage=${1:-}
+ build_root=${CAIHONG_BUILD_ROOT:-}
+-source_tree=$project_dir/external/power-profiles-daemon
++source_tree=$project_root/external/power-profiles-daemon
+ patch_file=$project_dir/packaging/power-profiles-daemon-caihong/0001-qcom-cpufreq.patch
+ 
+ if [[ -z $stage || ! -d $stage ]]; then
+diff --git a/scripts/install-caihong-qbootctl-stage.sh b/scripts/install-caihong-qbootctl-stage.sh
+index 1eec4dc..87fc75f 100755
+--- a/scripts/install-caihong-qbootctl-stage.sh
++++ b/scripts/install-caihong-qbootctl-stage.sh
+@@ -8,9 +8,10 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ stage=${1:-}
+ build_root=${CAIHONG_BUILD_ROOT:-}
+-source_tree="$project_dir/external/qbootctl"
++source_tree="$project_root/external/qbootctl"
+ 
+ if [[ -z $stage || ! -d $stage ]]; then
+ 	echo "usage: $0 STAGE_DIR" >&2
+diff --git a/scripts/install-caihong-ssc-stage.sh b/scripts/install-caihong-ssc-stage.sh
+index 2322f0a..1faf841 100755
+--- a/scripts/install-caihong-ssc-stage.sh
++++ b/scripts/install-caihong-ssc-stage.sh
+@@ -3,9 +3,10 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ stage=${1:-}
+ build_root=${CAIHONG_BUILD_ROOT:-}
+-source_tree=$project_dir/external/libssc
++source_tree=$project_root/external/libssc
+ patch_file=$project_dir/packaging/libssc/0001-per-operation-report-handler.patch
+ 
+ if [[ -z $stage || ! -d $stage || -z $build_root || ! -d $build_root ]]; then
+diff --git a/scripts/install-caihong-toolbox-rootfs.sh b/scripts/install-caihong-toolbox-rootfs.sh
+index 320a661..dc77b37 100755
+--- a/scripts/install-caihong-toolbox-rootfs.sh
++++ b/scripts/install-caihong-toolbox-rootfs.sh
+@@ -5,8 +5,9 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ rootfs=${1:-}
+-source_tree="$project_dir/external/caihong-toolbox"
++source_tree="$project_root/external/caihong-toolbox"
+ 
+ if [[ -z $rootfs || ! -d $rootfs ]]; then
+ 	echo "usage: $0 ROOTFS_DIR" >&2
+diff --git a/scripts/install-caihong-vaapi-rootfs.sh b/scripts/install-caihong-vaapi-rootfs.sh
+index 34dbdce..916c192 100755
+--- a/scripts/install-caihong-vaapi-rootfs.sh
++++ b/scripts/install-caihong-vaapi-rootfs.sh
+@@ -5,8 +5,9 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ rootfs=${1:-}
+-source_tree="$project_dir/external/qcom-va-driver"
++source_tree="$project_root/external/qcom-va-driver"
+ chroot_tool=${CHROOT_TOOL:-arch-chroot}
+ 
+ if [[ -z $rootfs || ! -d $rootfs ]]; then
+diff --git a/scripts/install-caihong-vaapi-stage.sh b/scripts/install-caihong-vaapi-stage.sh
+index 8a366c8..de0bc58 100755
+--- a/scripts/install-caihong-vaapi-stage.sh
++++ b/scripts/install-caihong-vaapi-stage.sh
+@@ -11,10 +11,11 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ stage=${1:-}
+ build_root=${CAIHONG_BUILD_ROOT:-}
+ libdir=${LIBDIR:-lib}
+-source_tree="$project_dir/external/qcom-va-driver"
++source_tree="$project_root/external/qcom-va-driver"
+ 
+ if [[ -z $stage || ! -d $stage ]]; then
+ 	echo "usage: $0 STAGE_DIR" >&2
+diff --git a/scripts/verify-armada-rootfs.sh b/scripts/verify-armada-rootfs.sh
+index e777d42..517a9be 100755
+--- a/scripts/verify-armada-rootfs.sh
++++ b/scripts/verify-armada-rootfs.sh
+@@ -5,6 +5,7 @@ set -Eeuo pipefail
+ CDPATH=
+ 
+ project_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
++project_root=${CAIHONG_PROJECT_ROOT:-$(cd -- "$project_dir/.." && pwd)}
+ target=${1:-}
+ if [[ -z $target || ! -d $target ]]; then
+ 	echo "usage: $0 ROOTFS_DIR" >&2
+@@ -198,8 +199,8 @@ for package in libcamera libcamera-ipa libcamera-tools; do
+ 	fi
+ done
+ 
+-libcamera_commit=$(git -C "$project_dir/external/libcamera" rev-parse --verify HEAD)
+-plasma_camera_commit=$(git -C "$project_dir/external/plasma-camera" rev-parse --verify HEAD)
++libcamera_commit=$(git -C "$project_root/external/libcamera" rev-parse --verify HEAD)
++plasma_camera_commit=$(git -C "$project_root/external/plasma-camera" rev-parse --verify HEAD)
+ grep -qx "source_commit=$libcamera_commit" \
+ 	"$target/usr/share/caihong/libcamera-build-info" 2>/dev/null || {
+ 	echo "Armada libcamera source commit does not match the workspace" >&2
+-- 
+2.54.0 (Apple Git-157)
+

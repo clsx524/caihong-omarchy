@@ -9,16 +9,15 @@ a dependency.
 
 | Path | Contents |
 | --- | --- |
+| `caihong-linux-rootfs/` | Build system submodule (`Osilvfe/caihong-linux-rootfs`) |
 | `linux/` | Kernel submodule (`Osilvfe/linux`) |
 | `omarchy/` | Omarchy submodule (`omacom/omarchy`) |
 | `omarchy-pkgs/` | Omarchy PKGBUILDs submodule (`omacom/omarchy-pkgs`) |
 | `external/` | Camera, SSC, VA-API, PPD, qbootctl, mkbootimg, toolbox submodules |
-| `external/audioreach-topology/` | Vendored topology files (not a submodule) |
 | `patches/<dep>/series` | Ordered patch list for one dependency |
 | `patches/<dep>/*.patch` | `git format-patch` output |
 | `pins.env` | Upstream commit and expected post-patch tree hash per dependency |
 | `scripts/` | Source preparation, patch refresh, verification, update tooling |
-| `packaging/`, `config/`, `firmware/`, `rootfs/`, `tools/` | Build system |
 | `docs/build.md` | Build and image instructions |
 
 ## Quick start
@@ -33,6 +32,14 @@ scripts/prepare-sources.sh
 `patches/<dep>/series` with `git am --3way`, verifies the resulting tree hash
 against `pins.env`, and writes `build/dependencies.resolved.env` for the build
 scripts.
+
+The build scripts live in `caihong-linux-rootfs/scripts/`. They resolve the
+kernel and external component trees from the superproject root, so run them
+from the submodule:
+
+```sh
+caihong-linux-rootfs/scripts/build-kernel-release.sh
+```
 
 The kernel tree contains paths that differ only by case (`xt_HL.c` and
 `xt_hl.c`). Run the source tooling on a case-sensitive filesystem: a
@@ -107,6 +114,7 @@ subject to vendor terms.
 ## Invariants
 
 - Submodule gitlinks always point at upstream commits.
+- The build system is a submodule too; local changes to it are patches.
 - `git -C <dep> status --porcelain` is empty in the committed state.
 - `pins.env` records the expected tree hash after the series; a mismatch is a
   hard failure.

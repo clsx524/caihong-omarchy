@@ -1,0 +1,7 @@
+0001-build-resolve-dependency-submodules-from-the-superpr.patch
+0002-kernel-enable-the-netfilter-modules-required-by-Omar.patch
+0003-platform-switch-the-image-to-SDDM.patch
+0004-boot-add-the-boot-state-verifier.patch
+0005-packaging-add-the-Omarchy-Caihong-composition.patch
+0006-tooling-delegate-dependency-checkout-to-the-superpro.patch
+0007-build-read-the-resolved-dependency-manifest-from-the.patch

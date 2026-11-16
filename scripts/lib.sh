@@ -6,6 +6,7 @@
 # with the bash 3.2 shipped by macOS.
 
 DEP_NAMES=(
+  caihong-linux-rootfs
   linux
   omarchy
   omarchy-pkgs
@@ -21,6 +22,7 @@ DEP_NAMES=(
 
 dep_path() {
   case $1 in
+    caihong-linux-rootfs) echo caihong-linux-rootfs ;;
     linux) echo linux ;;
     omarchy) echo omarchy ;;
     omarchy-pkgs) echo omarchy-pkgs ;;
@@ -38,6 +40,7 @@ dep_path() {
 
 dep_var() {
   case $1 in
+    caihong-linux-rootfs) echo CAIHONG_LINUX_ROOTFS ;;
     linux) echo LINUX ;;
     omarchy) echo OMARCHY ;;
     omarchy-pkgs) echo OMARCHY_PKGS ;;

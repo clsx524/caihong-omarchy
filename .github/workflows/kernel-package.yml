@@ -20,6 +20,8 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install build dependencies
         run: |
@@ -31,15 +33,15 @@ jobs:
             python3 rpm rsync shellcheck skopeo umoci zstd
 
       - name: Resolve kernel and platform dependencies
-        run: scripts/checkout-dependencies.sh
+        run: scripts/prepare-sources.sh
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v4
         with:
           path: .ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-${{ github.run_id }}
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('caihong-linux-rootfs/config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-${{ github.run_id }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-
+            ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('caihong-linux-rootfs/config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-
             ccache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Configure compiler cache
@@ -52,6 +54,7 @@ jobs:
       - name: Build kernel update packages
         run: |
           jobs=$(nproc)
+          cd caihong-linux-rootfs
           JOBS=$jobs ZSTD_THREADS=$jobs FORCE=1 \
             KERNEL_CC="ccache gcc" KERNEL_HOSTCC="ccache gcc" \
             scripts/build-kernel-release.sh
@@ -82,18 +85,18 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-${{ github.run_id }}
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('caihong-linux-rootfs/config/dependencies.env', 'linux/arch/arm64/configs/caihong_defconfig') }}-${{ github.run_id }}
 
       - name: Upload device update packages
         uses: actions/upload-artifact@v4
         with:
           name: caihong-device-update-${{ github.run_id }}
           path: |
-            release/linux-caihong-*-aarch64.pkg.tar.zst
-            release/linux-caihong-*-1.aarch64.rpm
-            release/caihong-platform-*-aarch64.pkg.tar.zst
-            release/caihong-platform-*-1.aarch64.rpm
-            release/SHA256SUMS.device-update
+            caihong-linux-rootfs/release/linux-caihong-*-aarch64.pkg.tar.zst
+            caihong-linux-rootfs/release/linux-caihong-*-1.aarch64.rpm
+            caihong-linux-rootfs/release/caihong-platform-*-aarch64.pkg.tar.zst
+            caihong-linux-rootfs/release/caihong-platform-*-1.aarch64.rpm
+            caihong-linux-rootfs/release/SHA256SUMS.device-update
           if-no-files-found: error
           compression-level: 0
           retention-days: 14

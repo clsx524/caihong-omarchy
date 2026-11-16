@@ -11,6 +11,7 @@ files they change.
 
 | Component | Path | License |
 | --- | --- | --- |
+| Caihong Linux rootfs | `caihong-linux-rootfs/` | GPL-2.0 WITH Linux-syscall-note (repository LICENSE); scripts are GPL-2.0-only per SPDX headers |
 | Linux kernel | `linux/` | GPL-2.0 WITH Linux-syscall-note |
 | Omarchy | `omarchy/` | MIT |
 | Omarchy PKGBUILDs | `omarchy-pkgs/` | MIT |
@@ -22,9 +23,10 @@ files they change.
 | qbootctl | `external/qbootctl/` | GPL-3.0 |
 | mkbootimg | `external/mkbootimg/` | Apache-2.0 |
 | caihong-toolbox | `external/caihong-toolbox/` | No license file in the pinned tree |
-| audioreach-topology | `external/audioreach-topology/` | BSD-3-Clause |
-| Device firmware | `firmware/`, `firmware-assets/` | Vendor terms; not covered by the GPL |
+| audioreach-topology | `caihong-linux-rootfs/external/audioreach-topology/` | BSD-3-Clause |
+| Device firmware | `caihong-linux-rootfs/firmware/`, `caihong-linux-rootfs/firmware-assets/` | Vendor terms; not covered by the GPL |
 
 The kernel patches under `patches/linux/` are GPL-2.0-only. The Omarchy and
 Omarchy PKGBUILDs patches are distributed under the MIT license of those
-projects.
+projects. The build-system patches under `patches/caihong-linux-rootfs/` are
+distributed under the terms of the files they change.
