@@ -104,6 +104,23 @@ scripts/refresh-patches.sh omarchy
 `range-diff` shows how each patch changed; the tree hash only proves that the
 series applied.
 
+## Credits
+
+This project is mostly glue around other people's work. Thanks to:
+
+- [Omarchy](https://omarchy.org) by DHH and contributors — the desktop.
+- [caihong-linux-rootfs](https://github.com/Osilvfe/caihong-linux-rootfs) — the rootfs build system, with contributions from Ahaan (Unnho).
+- [linux](https://github.com/Osilvfe/linux) — the Caihong kernel tree, with contributions from xianfei and others.
+- [libcamera](https://libcamera.org) — the camera stack.
+- [libssc](https://codeberg.org/DylanVanAssche/libssc) by Dylan Van Assche — Qualcomm sensor core.
+- [plasma-camera](https://invent.kde.org/plasma-mobile/plasma-camera) — the KDE camera app.
+- [qcom-va-driver](https://github.com/radxa-pkg/qcom-va-driver) by Christopher Obbard and Radxa — VA-API.
+- [power-profiles-daemon](https://gitlab.freedesktop.org/upower/power-profiles-daemon) — power profiles.
+- [qbootctl](https://github.com/linux-msm/qbootctl) by Caleb Connolly — boot slot control.
+- [mkbootimg](https://android.googlesource.com/platform/system/tools/mkbootimg) — Android boot images.
+- [AudioReach](https://github.com/AudioReach/audioreach-topology) — audio topology.
+- The Linux kernel community.
+
 ## License
 
 The build system and tooling are GPL-2.0-only; see [LICENSE](LICENSE).
