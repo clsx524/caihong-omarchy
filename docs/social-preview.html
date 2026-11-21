@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>caihong-omarchy social preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: #0a0c10;
+    color: #f2f4f8;
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    position: relative;
+  }
+  .glow {
+    position: absolute;
+    width: 900px; height: 900px;
+    right: -260px; top: -380px;
+    background: radial-gradient(circle, rgba(240,163,94,.16) 0%, rgba(240,163,94,0) 62%);
+  }
+  .glow2 {
+    position: absolute;
+    width: 700px; height: 700px;
+    left: -300px; bottom: -420px;
+    background: radial-gradient(circle, rgba(120,160,255,.10) 0%, rgba(120,160,255,0) 65%);
+  }
+  .wrap {
+    position: absolute; inset: 0;
+    padding: 72px 80px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .left { max-width: 760px; }
+  .eyebrow {
+    font: 500 19px/1 "SF Mono", ui-monospace, monospace;
+    letter-spacing: .2em; text-transform: uppercase;
+    color: #f0a35e;
+  }
+  h1 {
+    font-size: 138px; line-height: .92; letter-spacing: -.045em;
+    font-weight: 700; margin-top: 30px;
+  }
+  .sub {
+    font-size: 46px; line-height: 1.1; font-weight: 500;
+    letter-spacing: -.02em; color: #c9cfda; margin-top: 20px;
+  }
+  .specs {
+    margin-top: 36px;
+    font: 400 21px/1.7 "SF Mono", ui-monospace, monospace;
+    color: #8b93a1;
+  }
+  .specs b { color: #f2f4f8; font-weight: 500; }
+  .url {
+    position: absolute; left: 80px; bottom: 62px;
+    font: 400 20px/1 "SF Mono", ui-monospace, monospace;
+    color: #8b93a1;
+  }
+  .url span { color: #f2f4f8; }
+  .tablet {
+    width: 300px; height: 420px;
+    border-radius: 30px;
+    border: 2px solid rgba(255,255,255,.14);
+    background: linear-gradient(160deg, #171b22, #0c0e12);
+    box-shadow: 0 40px 90px rgba(0,0,0,.55), inset 0 0 0 9px #050608;
+    position: relative;
+    flex: none;
+  }
+  .screen {
+    position: absolute; inset: 15px;
+    border-radius: 18px;
+    background: linear-gradient(150deg, #1b2029 0%, #0d1015 62%);
+    overflow: hidden;
+  }
+  .bar {
+    height: 28px;
+    background: rgba(255,255,255,.055);
+    display: flex; align-items: center; gap: 7px;
+    padding: 0 12px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #f0a35e; }
+  .dot:nth-child(2) { background: #8b93a1; opacity: .55; }
+  .dot:nth-child(3) { background: #8b93a1; opacity: .3; }
+  .screen-glow {
+    position: absolute; width: 420px; height: 420px;
+    left: 50%; top: 58%; transform: translate(-50%, -50%);
+    background: radial-gradient(circle, rgba(240,163,94,.14) 0%, rgba(240,163,94,0) 65%);
+  }
+  .wordmark {
+    position: absolute; left: 0; right: 0; top: 50%;
+    transform: translateY(-50%);
+    text-align: center;
+    font: 500 30px/1 "SF Mono", ui-monospace, monospace;
+    letter-spacing: .12em; color: #e8ecf3;
+  }
+  .rule {
+    position: absolute; left: 50%; top: calc(50% + 34px);
+    transform: translateX(-50%);
+    width: 64px; height: 2px; background: #f0a35e; opacity: .9;
+  }
+  .screen-sub {
+    position: absolute; left: 0; right: 0; top: calc(50% + 56px);
+    text-align: center;
+    font: 400 13px/1 "SF Mono", ui-monospace, monospace;
+    letter-spacing: .18em; color: #8b93a1;
+  }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="glow2"></div>
+  <div class="wrap">
+    <div class="left">
+      <div class="eyebrow">OnePlus Pad 2 &middot; caihong</div>
+      <h1>Omarchy</h1>
+      <div class="sub">on the OnePlus Pad 2</div>
+      <div class="specs">
+        <b>SM8650</b> &middot; 3000&times;2120 &middot; 144&nbsp;Hz<br>
+        mainline Linux &middot; camera &middot; sensors &middot; audio &middot; VA-API
+      </div>
+    </div>
+    <div class="tablet">
+      <div class="screen">
+        <div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i></div>
+        <div class="screen-glow"></div>
+        <div class="wordmark">caihong</div>
+        <div class="rule"></div>
+        <div class="screen-sub">ARCH LINUX ARM</div>
+      </div>
+    </div>
+  </div>
+  <div class="url">github.com/<span>clsx524/caihong-omarchy</span></div>
+</body>
+</html>

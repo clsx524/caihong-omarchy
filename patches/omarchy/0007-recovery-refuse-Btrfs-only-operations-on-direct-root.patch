@@ -1,4 +1,4 @@
-From 963d7f25e11e0056b42d739d59b4c607e0485fdf Mon Sep 17 00:00:00 2001
+From bfb14d9760a733ae5ec6e1dff5f9f6aa007df1c4 Mon Sep 17 00:00:00 2001
 From: clsx524 <clsx524@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 23:02:37 -0800
 Subject: [PATCH 7/8] recovery: refuse Btrfs-only operations on direct-root

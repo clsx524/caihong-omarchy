@@ -1,4 +1,4 @@
-From 2a55eac5953afdf7ccd4be1a5d2df309a8f82267 Mon Sep 17 00:00:00 2001
+From 672a63a9ea410a48844432b8ae75173ded08274a Mon Sep 17 00:00:00 2001
 From: clsx524 <clsx524@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 23:02:37 -0800
 Subject: [PATCH 1/8] platform: add aarch64-caihong identity
@@ -118,10 +118,10 @@ index d912986b1..3abfbf3ab 100755
        echo aarch64-qualcomm
      fi
 diff --git a/test/shell.d/base-test.sh b/test/shell.d/base-test.sh
-index 30f9d1307..45705229e 100644
+index 9df5241ec..350c5c06f 100644
 --- a/test/shell.d/base-test.sh
 +++ b/test/shell.d/base-test.sh
-@@ -475,6 +475,7 @@ fake_platform() {
+@@ -477,6 +477,7 @@ fake_platform() {
    case $platform in
      aarch64-apple) compatible=(apple,j416c apple,t6021 apple,arm-platform) ;;
      aarch64-qualcomm) compatible=(lenovo,yoga-slim7x qcom,x1e80100) ;;

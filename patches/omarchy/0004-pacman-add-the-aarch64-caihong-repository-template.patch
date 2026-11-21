@@ -1,4 +1,4 @@
-From 5f11ce4ae9924baaed47c3f1c469098f82b2e485 Mon Sep 17 00:00:00 2001
+From 39a5b66a09b5c8f3b5093100f14cfcf814188e67 Mon Sep 17 00:00:00 2001
 From: clsx524 <clsx524@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 23:02:37 -0800
 Subject: [PATCH 4/8] pacman: add the aarch64-caihong repository template
@@ -84,7 +84,7 @@ index 4ca3f4271..674fe22b8 100644
      *)
        echo "Error: Unknown platform '${1:-}'." >&2
 diff --git a/test/shell.d/pacman-templates-test.sh b/test/shell.d/pacman-templates-test.sh
-index 95dd85d07..5dc159241 100755
+index 06cbb4d21..cfc09e532 100755
 --- a/test/shell.d/pacman-templates-test.sh
 +++ b/test/shell.d/pacman-templates-test.sh
 @@ -15,9 +15,14 @@ trap 'rm -rf "$work"' EXIT
@@ -134,7 +134,7 @@ index 95dd85d07..5dc159241 100755
  
  # omarchy-version-channel names each template pair's channel: the menu's
  # checkmarks and a refresh with no channel go by it.
-@@ -162,6 +169,7 @@ for platform in $platforms; do
+@@ -160,6 +167,7 @@ for platform in $platforms; do
      x86) templates=$SUDO_TEST_ROOT/default/pacman ;;
      aarch64) templates=$SUDO_TEST_ROOT/default/pacman/aarch64 ;;
      aarch64-apple) templates=$SUDO_TEST_ROOT/default/pacman/aarch64-apple ;;

@@ -1,4 +1,4 @@
-From 836d513333612e876732ca26d44049aab1a8daef Mon Sep 17 00:00:00 2001
+From b8edd64161afd5f8d4d4b2eed5bfb454a50e4767 Mon Sep 17 00:00:00 2001
 From: clsx524 <clsx524@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 23:02:37 -0800
 Subject: [PATCH 8/8] docs: describe the aarch64-caihong platform
@@ -9,10 +9,10 @@ Record the board's platform contract for agents and contributors.
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/AGENTS.md b/AGENTS.md
-index c67aeb1e9..882c24ca8 100644
+index fc655a0eb..6b07b3b6d 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -73,6 +73,7 @@ Omarchy runs on x86 and aarch64 (ARM). A platform name is the CPU architecture,
+@@ -74,6 +74,7 @@ Omarchy runs on x86 and aarch64 (ARM). A platform name is the CPU architecture,
  - `aarch64` - every ARM machine without a family of its own (Raspberry Pis and ARM VMs today)
  - `aarch64-apple` - Apple Silicon Macs
  - `aarch64-qualcomm` - Snapdragon laptops
@@ -20,7 +20,7 @@ index c67aeb1e9..882c24ca8 100644
  - `aarch64-n1x` - NVIDIA N1x laptops
  - `aarch64-gb10` - NVIDIA GB10 desktops (DGX Spark, ASUS Ascent GX10)
  
-@@ -81,7 +82,7 @@ A new family is named `aarch64-<family>` (e.g. `aarch64-qualcomm`, `aarch64-n1x`
+@@ -82,7 +83,7 @@ A new family is named `aarch64-<family>` (e.g. `aarch64-qualcomm`, `aarch64-n1x`
  Ask a helper; don't read `uname -m` or the device tree in feature code:
  
  - `omarchy-hw-x86` / `omarchy-hw-aarch64` - the CPU architecture. Use them for binary and ABI availability: a package with no aarch64 build, an x86 guest VM, multilib.

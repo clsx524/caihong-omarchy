@@ -1,0 +1,41 @@
+From 14121deb7e78889e76fc0b0cdd83d56d3f3d213f Mon Sep 17 00:00:00 2001
+From: clsx524 <clsx524@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 18:44:06 -0800
+Subject: [PATCH 2/2] pkgbuilds: use the quattro 4.5.0 package version
+
+From: clsx524 <clsx524@gmail.com>
+
+---
+ pkgbuilds/omarchy-settings/PKGBUILD | 2 +-
+ pkgbuilds/omarchy/PKGBUILD          | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/pkgbuilds/omarchy-settings/PKGBUILD b/pkgbuilds/omarchy-settings/PKGBUILD
+index 1710bb70..36c736e4 100644
+--- a/pkgbuilds/omarchy-settings/PKGBUILD
++++ b/pkgbuilds/omarchy-settings/PKGBUILD
+@@ -12,7 +12,7 @@
+ pkgname='omarchy-settings'
+ _tag=''
+ _commit='40556923f740728bba176ca4035a25d9e203ff21'
+-pkgver=4.0.0.r8097.g4055692.caihong1
++pkgver=4.5.0.r907.g4055692.caihong1
+ pkgrel=1
+ epoch=1
+ pkgdesc='Omarchy user defaults, /etc/skel content, fonts, plymouth theme, and support helpers'
+diff --git a/pkgbuilds/omarchy/PKGBUILD b/pkgbuilds/omarchy/PKGBUILD
+index 177f92ce..b30eb249 100644
+--- a/pkgbuilds/omarchy/PKGBUILD
++++ b/pkgbuilds/omarchy/PKGBUILD
+@@ -12,7 +12,7 @@
+ pkgname='omarchy'
+ _tag=''
+ _commit='40556923f740728bba176ca4035a25d9e203ff21'
+-pkgver=4.0.0.r8097.g4055692.caihong1
++pkgver=4.5.0.r907.g4055692.caihong1
+ pkgrel=1
+ epoch=1
+ pkgdesc='Beautiful, modern, and opinionated Arch Linux by DHH'
+-- 
+2.54.0 (Apple Git-157)
+

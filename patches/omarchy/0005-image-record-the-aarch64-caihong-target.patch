@@ -1,4 +1,4 @@
-From 8b5e923adf048db9bf0456094ae0701e88adc4a3 Mon Sep 17 00:00:00 2001
+From a84069b5e24be7a0694fcbc5c9535b2deff63709 Mon Sep 17 00:00:00 2001
 From: clsx524 <clsx524@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 23:02:37 -0800
 Subject: [PATCH 5/8] image: record the aarch64-caihong target

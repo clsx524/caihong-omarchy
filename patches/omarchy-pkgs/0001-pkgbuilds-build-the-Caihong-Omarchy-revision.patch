@@ -1,42 +1,45 @@
-From e392191cb19b7a1600eaf3a8e63dd96e5f356dbf Mon Sep 17 00:00:00 2001
+From 7bd3848b59352b6bc8a909a912ca71ae8b6948fe Mon Sep 17 00:00:00 2001
 From: clsx524 <clsx524@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 23:02:46 -0800
-Subject: [PATCH] pkgbuilds: build the Caihong Omarchy revision
+Subject: [PATCH 1/2] pkgbuilds: build the Caihong Omarchy revision
 
 Pin both packages to the Caihong Omarchy commit, carry the caihong1 version, strip AppleDouble sidecars from the source copy, and install the shared hardware detector for the settings scriptlets.
 ---
- pkgbuilds/omarchy-settings/PKGBUILD             | 17 +++++++++++++----
- .../omarchy-settings/omarchy-settings.install   | 14 +++++++-------
- pkgbuilds/omarchy/PKGBUILD                      | 11 +++++++----
- 3 files changed, 27 insertions(+), 15 deletions(-)
+ pkgbuilds/omarchy-settings/PKGBUILD           | 20 ++++++++++++++-----
+ .../omarchy-settings/omarchy-settings.install | 14 ++++++-------
+ pkgbuilds/omarchy/PKGBUILD                    | 16 +++++++++------
+ 3 files changed, 32 insertions(+), 18 deletions(-)
 
 diff --git a/pkgbuilds/omarchy-settings/PKGBUILD b/pkgbuilds/omarchy-settings/PKGBUILD
-index dc33b3cf..5b42591c 100644
+index dc33b3cf..1710bb70 100644
 --- a/pkgbuilds/omarchy-settings/PKGBUILD
 +++ b/pkgbuilds/omarchy-settings/PKGBUILD
-@@ -11,9 +11,9 @@
+@@ -10,10 +10,11 @@
+ #    provenance only (empty when cut from a bare commit). omarchy and
  #    omarchy-settings must always carry identical _tag/_commit/pkgver/sha256sums.
  pkgname='omarchy-settings'
- _tag='v4.5.0'
+-_tag='v4.5.0'
 -_commit='a948d8a6871f446b335258c827648ac5f4e9428b'
 -pkgver=4.5.0
 -pkgrel=2
-+_commit='ac2690cd7be4f47e4a255f5e2e78d904d436b068'
-+pkgver=4.5.0.caihong1
-+pkgrel=8
++_tag=''
++_commit='40556923f740728bba176ca4035a25d9e203ff21'
++pkgver=4.0.0.r8097.g4055692.caihong1
++pkgrel=1
++epoch=1
  pkgdesc='Omarchy user defaults, /etc/skel content, fonts, plymouth theme, and support helpers'
  # Arch-specific because the shipped /etc tree is not the same on every
  # architecture for older sources: their zram and oomd drop-ins belong to the
-@@ -135,7 +135,7 @@ if [[ -n "${OMARCHY_SRC:-}" ]]; then
+@@ -135,7 +136,7 @@ if [[ -n "${OMARCHY_SRC:-}" ]]; then
    sha256sums=()
  else
    source=("omarchy::git+https://github.com/omacom/omarchy.git#commit=${_commit}")
 -  sha256sums=('bf3220fcc7b9d883a86f1c59efd79ce675fe137cdbb1324e9785c3cc45d01de7')
-+  sha256sums=('c31a1cb76aa89e78254603f7ea6deecd9ed7e78309befd9a0b70ddbf015468ba')
++  sha256sums=('4bc2caa511d1e2feba8459f1438ffef61ceb7d4e61ed8e5d272541cdf86089fd')
  fi
  
  prepare() {
-@@ -143,6 +143,9 @@ prepare() {
+@@ -143,6 +144,9 @@ prepare() {
      rm -rf "$srcdir/omarchy"
      mkdir -p "$srcdir/omarchy"
      cp -a "${OMARCHY_SRC}/." "$srcdir/omarchy/"
@@ -46,7 +49,7 @@ index dc33b3cf..5b42591c 100644
    fi
  }
  
-@@ -487,6 +490,12 @@ EOF
+@@ -487,6 +491,12 @@ EOF
        "$pkgdir/usr/share/libalpm/scripts/omarchy-hw-platform"
    fi
  
@@ -92,32 +95,44 @@ index d3f9daf5..2468a1e3 100644
        rm -f /etc/os-release
        ln -s ../usr/lib/os-release /etc/os-release
 diff --git a/pkgbuilds/omarchy/PKGBUILD b/pkgbuilds/omarchy/PKGBUILD
-index 25299b52..1e582ed6 100644
+index 4afba5e7..177f92ce 100644
 --- a/pkgbuilds/omarchy/PKGBUILD
 +++ b/pkgbuilds/omarchy/PKGBUILD
-@@ -11,9 +11,9 @@
+@@ -10,10 +10,11 @@
+ #    provenance only (empty when cut from a bare commit). omarchy and
  #    omarchy-settings must always carry identical _tag/_commit/pkgver/sha256sums.
  pkgname='omarchy'
- _tag='v4.5.0'
+-_tag='v4.5.0'
 -_commit='a948d8a6871f446b335258c827648ac5f4e9428b'
 -pkgver=4.5.0
 -pkgrel=2
-+_commit='ac2690cd7be4f47e4a255f5e2e78d904d436b068'
-+pkgver=4.5.0.caihong1
-+pkgrel=8
++_tag=''
++_commit='40556923f740728bba176ca4035a25d9e203ff21'
++pkgver=4.0.0.r8097.g4055692.caihong1
++pkgrel=1
++epoch=1
  pkgdesc='Beautiful, modern, and opinionated Arch Linux by DHH'
  # The payload is architecture-independent, but the dependency set is not: the
  # boot stack differs per architecture (see depends_x86_64 / depends_aarch64),
-@@ -97,7 +97,7 @@ if [[ -n "${OMARCHY_SRC:-}" ]]; then
+@@ -35,7 +36,7 @@ depends=(
+   # package satisfy it, leaving a mixed dev/stable install. A versioned
+   # dependency can only be satisfied by the real omarchy-settings built
+   # from the same _commit, and forces the pair to upgrade together.
+-  "omarchy-settings=${pkgver}"
++  "omarchy-settings=${epoch}:${pkgver}"
+ 
+   # Wayland / Hyprland core
+   'hyprland'
+@@ -98,7 +99,7 @@ if [[ -n "${OMARCHY_SRC:-}" ]]; then
    sha256sums=()
  else
    source=("omarchy::git+https://github.com/omacom/omarchy.git#commit=${_commit}")
 -  sha256sums=('bf3220fcc7b9d883a86f1c59efd79ce675fe137cdbb1324e9785c3cc45d01de7')
-+  sha256sums=('c31a1cb76aa89e78254603f7ea6deecd9ed7e78309befd9a0b70ddbf015468ba')
++  sha256sums=('4bc2caa511d1e2feba8459f1438ffef61ceb7d4e61ed8e5d272541cdf86089fd')
  fi
  
  prepare() {
-@@ -105,6 +105,9 @@ prepare() {
+@@ -106,6 +107,9 @@ prepare() {
      rm -rf "$srcdir/omarchy"
      mkdir -p "$srcdir/omarchy"
      cp -a "${OMARCHY_SRC}/." "$srcdir/omarchy/"

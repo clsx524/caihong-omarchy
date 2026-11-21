@@ -1,4 +1,4 @@
-From cd11c65ab41f7031d3635ad0c5ed8599ddfc78a0 Mon Sep 17 00:00:00 2001
+From 118f6dce89a05e215eb783aa9bf8efa6fbf68600 Mon Sep 17 00:00:00 2001
 From: clsx524 <clsx524@users.noreply.github.com>
 Date: Sun, 15 Nov 2026 23:02:37 -0800
 Subject: [PATCH 2/8] packages: add the aarch64-caihong composition
@@ -59,10 +59,10 @@ index 000000000..2c417211f
 +# Adreno GPUs.
 +vulkan-freedreno
 diff --git a/install/omarchy-base.packages b/install/omarchy-base.packages
-index 5b8e9079f..d9e316fe6 100644
+index dac5fc145..0ade435a4 100644
 --- a/install/omarchy-base.packages
 +++ b/install/omarchy-base.packages
-@@ -94,7 +94,7 @@ noto-fonts
+@@ -92,7 +92,7 @@ noto-fonts
  noto-fonts-cjk
  noto-fonts-emoji
  nss-mdns
@@ -72,7 +72,7 @@ index 5b8e9079f..d9e316fe6 100644
  omacalc
  omacut
 diff --git a/test/shell.d/platform-packages-test.sh b/test/shell.d/platform-packages-test.sh
-index 63aa068d3..9795936ee 100644
+index 9a41438b1..ca0f2ad09 100644
 --- a/test/shell.d/platform-packages-test.sh
 +++ b/test/shell.d/platform-packages-test.sh
 @@ -96,6 +96,13 @@ grep -Fxq linux-omarchy <<<"$(names_of aarch64-n1x)" || fail "the N1x list names
